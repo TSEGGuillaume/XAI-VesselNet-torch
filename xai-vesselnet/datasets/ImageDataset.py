@@ -9,7 +9,7 @@ from monai.transforms import apply_transform
 class CImageDatasetd(ImageDataset):
     """
     Dictionary-based monai.data.ImageDataset (ref. https://docs.monai.io/en/stable/data.html#imagedataset)
-    
+
     Each item is a dictionnary with keys ["image", "mask", "fname"]
 
     Loads image/segmentation pairs of files from the given filename lists. Transformations can be specified
@@ -65,13 +65,13 @@ class CImageDatasetd(ImageDataset):
             return {"image": item[0], "mask": None, "fname": tail}
 
 
-class CCustomGridPatchDataset_(IterableDataset):
+class CCustomGridPatchDataset(IterableDataset):
     """
-    Yields patches from data read from an image dataset.
+    Yields patches from data read from a CImageDatasetd instance.
 
     The patches used by the generator manage class imbalance by over-representing the foreground through a balance factor.
 
-    Overwritting of monai.data.GridPatchDataset (ref. https://docs.monai.io/en/stable/data.html#gridpatchdataset)
+    This class is a customized rewrite of monai.data.GridPatchDataset (ref. https://docs.monai.io/en/stable/data.html#gridpatchdataset)
 
     Args:
         data: the data source to read image data from.
@@ -79,7 +79,7 @@ class CCustomGridPatchDataset_(IterableDataset):
             `patch_iter(dataset[idx])` must yield a tuple: (patches, coordinates).
             see also: :py:class:`monai.data.PatchIter` or :py:class:`monai.data.PatchIterd`.
         transform: a callable data transform operates on the patches.
-        foreground_ratio: the requierement foreground ratio.
+        foreground_ratio: the required foreground ratio.
         with_coordinates: whether to yield the coordinates of each patch, default to `True`.
 
     """
@@ -107,14 +107,14 @@ class CCustomGridPatchDataset_(IterableDataset):
             for patch, *others in self.patch_iter(image):
                 out_patch = patch
 
-                use_patch = False  # State variable that controls the integration of the current patch in the generator
+                use_patch = False  # State variable that controls the integration of the current patch into the generator
 
                 # Handles the class imbalance problem.
                 # The current patch is pass to the generator with conditions -> 1 AND (2 OR 3)
                 #
                 # Conditions:
                 # 1. There is a signal in the patch (e.g. not a patch from a masked area of the image)
-                # 2. The patch integrates a positive target (i.e. positive voxels in the ground-truth)
+                # 2. The patch contains a positive target (i.e. positive voxels in the ground-truth)
                 # 3. There is less background patches than expected (i.e. the required proportion of background patches is not respected)
                 if np.any(out_patch["image"]):
                     if np.any(out_patch["mask"]):
