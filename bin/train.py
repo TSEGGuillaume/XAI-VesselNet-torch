@@ -124,7 +124,7 @@ def fit(model, train_loader, val_loader, device="cpu", max_epoch=None, input_siz
 
             # writer.add_scalar("train_loss", loss.item(), epoch_len * epoch + step)
 
-            logger.info(f"[{step}/~{epoch_len}] Train loss : {loss.item():.4f}")
+            logger.debug(f"[{step}/~{epoch_len}] Train loss : {loss.item():.4f}")
 
         etime = time.time()
 
@@ -135,6 +135,9 @@ def fit(model, train_loader, val_loader, device="cpu", max_epoch=None, input_siz
 
         logger.info(
             f"Epoch {epoch + 1} ({etime - stime} s) | average loss: {epoch_loss:.4f}"
+        )
+        logger.debug(
+            "Optimizer: {}".format(optimizer.state_dict()['param_groups'])
         )
 
         # Validation
@@ -170,7 +173,7 @@ def fit(model, train_loader, val_loader, device="cpu", max_epoch=None, input_siz
                     loss = loss_function(
                         torch.unsqueeze(val_outputs[0], axis=0), val_labels
                     ) # Bad ! TODO : reimplement properly
-                    logger.info(f"Current val loss : {loss.item()}")
+                    logger.debug(f"Current val loss : {loss.item()}")
                     global_val_loss += loss.item()
 
                 global_val_loss /= n_val
@@ -187,7 +190,7 @@ def fit(model, train_loader, val_loader, device="cpu", max_epoch=None, input_siz
                     best_metric = metric
                     best_metric_epoch = epoch + 1
                     torch.save(
-                        model.state_dict(), "results/model_{}.pth".format(timestamp)
+                        model.state_dict(), "results/model_{}.pth".format(timestamp) # TODO: save Optimizer.state_dict()
                     )
                     logger.debug("Saved new best performing model")
 
@@ -250,7 +253,7 @@ def main():
 
     # Model
     in_channels = first(train_loader)["image"].shape[1]  # We assume the same input channels through the whole datasets ; N, C, H, W, [D]
-    logger.info(f"Input channels : {in_channels}")
+    logger.debug(f"Input channels : {in_channels}")
 
     model = instanciate_model(args.model, in_channels=in_channels).to(device)
     fit(
@@ -289,7 +292,7 @@ if __name__ == "__main__":
     torch.use_deterministic_algorithms(True)
 
     # Logs
-    logger.debug(timestamp)
+    logger.info(timestamp)
     logger.debug(args)
 
     main()

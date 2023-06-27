@@ -67,7 +67,7 @@ def instanciate_model(model_name: str, spatial_dims=3, in_channels=1, out_channe
                 verbose=0,
             )
         )
-    )
+    ) # Does not work on Windows
 
     return model
 
