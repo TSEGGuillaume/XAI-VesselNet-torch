@@ -2,7 +2,7 @@ import os
 import configparser
 import logging as log
 
-class CConfiguration:
+class Configuration:
     """
     Class containing configuration of the application.
 
@@ -118,10 +118,10 @@ class CConfiguration:
 
         return content
 
-class CDefaultConfiguration(CConfiguration):
+class CDefaultConfiguration(Configuration):
     """
     Class containing the default configuration of the application.
-    As a subclass of CConfiguration, this class only create an instance of CConfiguration with default settings.
+    As a subclass of Configuration, this class only create an instance of Configuration with default settings.
     """
     def __init__(self):
         workspace = os.getcwd()
