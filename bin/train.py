@@ -68,7 +68,7 @@ def load_training_hyperparameters(json_path: str):
     
     with open(json_path, "r") as f:
         training_cfg = json.load(f)
-        logging.debug(
+        logger.debug(
             "Loading hyperparameters from {} \n {}".format(json_path, training_cfg)
         )
         return training_cfg
@@ -216,7 +216,7 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
                             'model_state_dict': model.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict()
                         },
-                        f"results/weights/model_{timestamp}.pth"
+                        os.path.join(cfg.result_dir, "weights", f"model_{timestamp}.pth")
                     )
                     logger.debug("Saved new best performing model")
 
