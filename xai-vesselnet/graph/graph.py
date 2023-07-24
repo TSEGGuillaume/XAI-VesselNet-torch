@@ -152,10 +152,13 @@ class CGraph:
         self.nodes = dict()
         self.connections = dict()
         self._nodes_sort = dict() # dict of int:list(node) where the key corresponds to degree and points on the list of nodes of that degree 
+        self.max_degree = 0
 
         for node in p_nodes:
             self.nodes[node._id] = node
             self._nodes_sort.setdefault(node.degree, []).append(node)
+            if node.degree > self.max_degree:
+                self.max_degree = node.degree
                  
         for connection in p_connections:
             connection.node1 = self.nodes[connection.node1] # Replace the ID of the node by the node itself 
