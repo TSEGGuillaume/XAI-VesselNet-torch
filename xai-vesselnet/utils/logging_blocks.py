@@ -4,17 +4,16 @@ def log_hardware(device):
     import torch
 
     logger.info("{}".format("-" * 10))
+
     logger.info("HARDWARE INFORMATIONS")
+    
     logger.info(
-        "CUDA available : {}  [ :{} device(s) ]".format(
-            torch.cuda.is_available(), torch.cuda.device_count()
-        )
+        f"CUDA available : {torch.cuda.is_available()}  [ :{torch.cuda.device_count()} device(s) ]" if torch.cuda.is_available() else f"CUDA available : {torch.cuda.is_available()}" 
     )
     logger.info(
-        "Current device : {}:{} ({})".format(
-            device, torch.cuda.current_device(), torch.cuda.get_device_name(device)
-        )
+        f"Current device : {device}:{torch.cuda.current_device()} ({torch.cuda.get_device_name(device)})" if device == "cuda" else f"Current device : {device}"
     )
+
     logger.info("{}".format("-" * 10))
 
 logger = logging.getLogger("app")
