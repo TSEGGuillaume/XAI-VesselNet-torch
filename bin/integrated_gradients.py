@@ -76,17 +76,20 @@ def main():
 
     if args.node is not None:
         obs_pt = vessel_graph.nodes[args.node]
-        output_postfix = f"ig_node_{args.node}" # TODO : ajouter dataname et model_id au postfix
+        output_postfix = f"ig_node_{args.node}" 
 
         logger.info(obs_pt)
 
-
     elif args.centerline is not None:
-        obs_pt = None # TODO : Voir integrated_gradients.py TF
-        logger.info("Centerline")
+        centerline = vessel_graph.connections[args.centerline]
+        obs_pt = centerline.getMidPoint()
 
+        output_postfix = f"ig_skvx_{args.centerline}"
+
+        logger.info("_{}_ |{}<->{}| - Skeleton voxel : {}".format(centerline._id, centerline.node1._id, centerline.node2._id, obs_pt.pos))
+        
     elif args.position is not None:
-        obs_pt = None # TODO : Voir integrated_gradients.py TF
+        obs_pt = None # TODO
         logger.info("Position")
 
     else:
@@ -101,9 +104,8 @@ def main():
     # Integrated Gradients         
     ig = IntegratedGradients(model)
     n_steps = 100
-    baseline = None
-
-    sw_shape = (1, 64, 64, 64) # Channel dim must be specified ; spatial dim must be the same as that of the inference 
+    baseline = None # None : full-black volume 
+    sw_shape = (in_channels, 64, 64, 64) # Channel dim must be specified ; spatial dim must be the same as that of the inference 
     sw_overlap = (0.0, 0.25, 0.25, 0.25) # must be the same as that of the inference 
     patches = iter_patch(I.numpy(), sw_shape, overlap=sw_overlap, mode="constant") # I don't know why iter_patch is crashing if Tensor instead of np.ndarray 
 
@@ -116,40 +118,40 @@ def main():
             obs_pt.pos[1] > pos[2,0] and obs_pt.pos[1] < pos[2,1] and 
             obs_pt.pos[2] > pos[3,0] and obs_pt.pos[2] < pos[3,1]
         ):
-            # TODO : sw_chape passe en (7...)
-            # Si bonne position
-            # Pour k de 0 à n_channel : attribution = add(attribution, new_attrib)
-            target = (pos[0,0], obs_pt.pos[0]-pos[1,0], obs_pt.pos[1]-pos[2,0], obs_pt.pos[2]-pos[3,0]) # Target should change channel
+            # Compute targeted node in the patch coordinate system
+            target = (0, obs_pt.pos[0]-pos[1,0], obs_pt.pos[1]-pos[2,0], obs_pt.pos[2]-pos[3,0]) # Don't forget that we're targeting an output voxel! The output has only 1 channel
             logger.info(f"Relative target: {target}")
 
-            positions.append(np.copy(pos))
-
             patch = torch.from_numpy(np.expand_dims(patch, axis=0)).type(torch.FloatTensor).to(device) # TODO: improve cast and numpy<->torch
+            patch.requires_grad = True # Not sure this is mandatory
             attribution = ig.attribute(patch, target=target, baselines=baseline, n_steps=n_steps)
+            
+            print("Attribution shape : ", attribution.shape, torch.sum(attribution))
+
+            positions.append(np.copy(pos))
             attributions.append(attribution)
 
     final_attribution = torch.zeros_like(I).to(device)
-    print(final_attribution.shape)
 
     for attr, pos in zip(attributions, positions):
         stop_x = final_attribution.shape[1] if pos[1,0] + sw_shape[1] > final_attribution.shape[1] else pos[1,1]
         stop_y = final_attribution.shape[2] if pos[2,0] + sw_shape[2] > final_attribution.shape[2] else pos[2,1]
         stop_z = final_attribution.shape[3] if pos[3,0] + sw_shape[3] > final_attribution.shape[3] else pos[3,1]
 
-        final_attribution[pos[0,0], pos[1,0]:pos[1,1], pos[2,0]:pos[2,1], pos[3,0]:pos[3,1]] = torch.add(
-            final_attribution[pos[0,0], pos[1,0]:pos[1,1], pos[2,0]:pos[2,1], pos[3,0]:pos[3,1]],
-            attr[0, 0, 0:stop_x-pos[1,0], 0:stop_y-pos[2,0], 0:stop_z-pos[3,0]]
+        final_attribution[:, pos[1,0]:pos[1,1], pos[2,0]:pos[2,1], pos[3,0]:pos[3,1]] = torch.add(
+            final_attribution[:, pos[1,0]:pos[1,1], pos[2,0]:pos[2,1], pos[3,0]:pos[3,1]],
+            attr[0, :, 0:stop_x-pos[1,0], 0:stop_y-pos[2,0], 0:stop_z-pos[3,0]]
         )
 
     # Save
     saver = SaveImage(
         output_dir=cfg.result_dir,
         output_ext=".nii",
-        output_postfix=output_postfix,
+        output_postfix=f"{os.path.splitext(os.path.basename(args.weights))[0]}_{output_postfix}",
         resample=False,
         separate_folder=False
     )
-    saver(final_attribution )
+    saver(final_attribution)
 
 if __name__ == "__main__":
     import utils.configuration as appcfg
