@@ -1,6 +1,7 @@
 import argparse
 import os
 import logging
+import time
 
 import torch
 import numpy as np
@@ -112,6 +113,8 @@ def main():
     attributions = []
     positions = []
 
+    stime = time.time()
+
     for patch, pos in patches:
         if (
             obs_pt.pos[0] > pos[1,0] and obs_pt.pos[0] < pos[1,1] and 
@@ -125,13 +128,20 @@ def main():
             patch = torch.from_numpy(np.expand_dims(patch, axis=0)).type(torch.FloatTensor).to(device) # TODO: improve cast and numpy<->torch
             patch.requires_grad = True # Not sure this is mandatory
             attribution = ig.attribute(patch, target=target, baselines=baseline, n_steps=n_steps)
-            
+
             print("Attribution shape : ", attribution.shape, torch.sum(attribution))
 
             positions.append(np.copy(pos))
             attributions.append(attribution)
+    
+    etime = time.time()
+    logger.info(
+        f"Integrated Gradients map computed. Enalpsed time: {etime - stime} s"
+    )
 
     final_attribution = torch.zeros_like(I).to(device)
+
+    stime = time.time()
 
     for attr, pos in zip(attributions, positions):
         stop_x = final_attribution.shape[1] if pos[1,0] + sw_shape[1] > final_attribution.shape[1] else pos[1,1]
@@ -142,6 +152,11 @@ def main():
             final_attribution[:, pos[1,0]:pos[1,1], pos[2,0]:pos[2,1], pos[3,0]:pos[3,1]],
             attr[0, :, 0:stop_x-pos[1,0], 0:stop_y-pos[2,0], 0:stop_z-pos[3,0]]
         )
+
+    etime = time.time()
+    logger.info(
+        f"Global IG map reconstructed. Enalpsed time: {etime - stime} s"
+    )
 
     # Save
     saver = SaveImage(
