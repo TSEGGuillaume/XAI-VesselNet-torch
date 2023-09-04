@@ -117,9 +117,9 @@ def main():
 
     for patch, pos in patches:
         if (
-            obs_pt.pos[0] > pos[1,0] and obs_pt.pos[0] < pos[1,1] and 
-            obs_pt.pos[1] > pos[2,0] and obs_pt.pos[1] < pos[2,1] and 
-            obs_pt.pos[2] > pos[3,0] and obs_pt.pos[2] < pos[3,1]
+            obs_pt.pos[0] >= pos[1,0] and obs_pt.pos[0] < pos[1,1] and 
+            obs_pt.pos[1] >= pos[2,0] and obs_pt.pos[1] < pos[2,1] and 
+            obs_pt.pos[2] >= pos[3,0] and obs_pt.pos[2] < pos[3,1]
         ):
             # Compute targeted node in the patch coordinate system
             target = (0, obs_pt.pos[0]-pos[1,0], obs_pt.pos[1]-pos[2,0], obs_pt.pos[2]-pos[3,0]) # Don't forget that we're targeting an output voxel! The output has only 1 channel
@@ -139,24 +139,23 @@ def main():
         f"Integrated Gradients map computed. Enalpsed time: {etime - stime} s"
     )
 
-    final_attribution = torch.zeros_like(I).to(device)
+    # Compute the shape of fused attribution maps
+    min_x = min([position[1,0] for position in positions]) # Could be moved directly to the above iter. in a future improvement 
+    max_x = max([position[1,1] for position in positions]) # Could be moved directly to the above iter. in a future improvement 
+    min_y = min([position[2,0] for position in positions]) # Could be moved directly to the above iter. in a future improvement 
+    max_y = max([position[2,1] for position in positions]) # Could be moved directly to the above iter. in a future improvement 
+    min_z = min([position[3,0] for position in positions]) # Could be moved directly to the above iter. in a future improvement 
+    max_z = max([position[3,1] for position in positions]) # Could be moved directly to the above iter. in a future improvement 
 
-    stime = time.time()
-
+    final_attribution = torch.zeros((in_channels, max_x-min_x, max_y-min_y, max_z-min_z)).to(device)
+    
     for attr, pos in zip(attributions, positions):
-        stop_x = final_attribution.shape[1] if pos[1,0] + sw_shape[1] > final_attribution.shape[1] else pos[1,1]
-        stop_y = final_attribution.shape[2] if pos[2,0] + sw_shape[2] > final_attribution.shape[2] else pos[2,1]
-        stop_z = final_attribution.shape[3] if pos[3,0] + sw_shape[3] > final_attribution.shape[3] else pos[3,1]
-
-        final_attribution[:, pos[1,0]:pos[1,1], pos[2,0]:pos[2,1], pos[3,0]:pos[3,1]] = torch.add(
-            final_attribution[:, pos[1,0]:pos[1,1], pos[2,0]:pos[2,1], pos[3,0]:pos[3,1]],
-            attr[0, :, 0:stop_x-pos[1,0], 0:stop_y-pos[2,0], 0:stop_z-pos[3,0]]
+        # The fusing method is addition ; chosen arbitrarily
+        final_attribution[:, pos[1,0]-min_x:pos[1,1]-min_x, pos[2,0]-min_y:pos[2,1]-min_y, pos[3,0]-min_z:pos[3,1]-min_z] = torch.add(
+            final_attribution[:, pos[1,0]-min_x:pos[1,1]-min_x, pos[2,0]-min_y:pos[2,1]-min_y, pos[3,0]-min_z:pos[3,1]-min_z],
+            attr
         )
-
-    etime = time.time()
-    logger.info(
-        f"Global IG map reconstructed. Enalpsed time: {etime - stime} s"
-    )
+    output_fname_pos =  f"{os.path.splitext(os.path.basename(args.img_path))[0]}_{os.path.splitext(os.path.basename(args.weights))[0]}_{output_postfix}_pos"
 
     # Save
     saver = SaveImage(
@@ -164,10 +163,14 @@ def main():
         output_ext=".nii",
         output_postfix=f"{os.path.splitext(os.path.basename(args.weights))[0]}_{output_postfix}",
         resample=False,
-        separate_folder=False
+        separate_folder=False,
+        output_dtype=I.dtype
     )
-    saver(final_attribution)
+    saver(final_attribution, meta_data=meta)
 
+    with open(os.path.join(cfg.result_dir, output_fname_pos + ".txt"), "w") as f:
+        f.write(f"{min_x};{max_x}\n{min_y};{max_y}\n{min_z};{max_z}")
+    
 if __name__ == "__main__":
     import utils.configuration as appcfg
 
