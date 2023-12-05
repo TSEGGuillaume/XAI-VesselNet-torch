@@ -116,9 +116,7 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
     Approximation, len(dataloader) does not work because we are working on an IterableDataset.
     Manual says that for IterableDataset, len(dataloader) return an approximation of len(dataset) / batch_size, with proper rounding but error here.
     """ 
-    epoch_len = round(
-        len(list(train_loader.dataset)) / train_loader.batch_size
-    )  
+    epoch_len = round(len(list(train_loader.dataset)) / train_loader.batch_size)  
 
     loss = 0.0
 
@@ -185,20 +183,22 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
                     val_outputs = sliding_window_inference(
                         val_images, hyperparameters["patch_size"], sw_batch_size, model
                     )
-                    val_outputs = [
-                        post_transforms(i) for i in decollate_batch(val_outputs)
-                    ]
 
-                    # Compute loss and metric for current iteration
-                    val_metric(y_pred=val_outputs, y=val_labels)
-
+                    # Compute the validation loss at the current epoch
+                    # Validation loss must be computed before postprocessing, as it apply a sigmoid by itself
                     for val_output in val_outputs:
                         loss = loss_function(
-                            torch.unsqueeze(val_output, axis=0), val_labels
+                            torch.unsqueeze(val_output, axis=0), val_labels 
                         )
                         logger.debug(f"Current val loss : {loss.item()}")
                         global_val_loss += loss.item()
                         n_val += 1
+
+                    val_outputs = [
+                        post_transforms(i) for i in decollate_batch(val_outputs)
+                    ]
+                    val_metric(y_pred=val_outputs, y=val_labels)
+
 
                 global_val_loss /= n_val
 
