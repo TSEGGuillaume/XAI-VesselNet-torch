@@ -1,13 +1,29 @@
 {
+    "metrics": [
+        "dice",
+        "cldice"
+    ],
     "schedule": [
         {
+            "reference": "image_1_groundtruth.nii.gz",
             "data": [
                 "image_1.nii.gz"
+            ],
+            "prediction": "",
+            "mask": [
+                "image_1_mask_1.nii.gz",
+                "image_1_mask_2.nii.gz"
             ]
         },
         {
+            "reference": "image_2_groundtruth.nii.gz",
             "data": [
                 "image_2.nii.gz"
+            ],
+            "prediction": "",
+            "mask": [
+                "image_2_mask_1.nii.gz",
+                "image_2_mask_2.nii.gz"
             ]
         }
     ]
