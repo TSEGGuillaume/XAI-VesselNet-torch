@@ -2,8 +2,27 @@ import logging
 
 from datasets.ImageDataset import ImageDatasetd, BalancedGridPatchDataset
 
+def instanciate_image_dataset(x:list, y:list, image_only=True):
+    from monai.data.utils import first
 
-def instanciate_image_dataset(csv_path:str, image_only=True):
+    ds = ImageDatasetd(
+        image_files=x,
+        seg_files=y,
+        ensure_channel_first=True,
+        image_only=image_only,
+    )
+
+    logger.debug("Number of data: {}".format(len(ds)))
+    logger.debug(
+        "Shape of first data : [ {}  -  {} ]".format(
+            first(ds)["img"].shape,
+            first(ds)["seg"].shape
+        )
+    )
+
+    return ds
+
+def instanciate_image_dataset_csv(csv_path:str, image_only=True):
     from monai.data.utils import first
     from utils.dataset_reader import parse_dataset_csv
 
@@ -56,8 +75,8 @@ def create_training_loaders(csv_train_path:str, csv_val_path:str, input_size:tup
         RandGaussianSmoothd
     )
 
-    train_ds    = instanciate_image_dataset(csv_train_path)
-    val_ds      = instanciate_image_dataset(csv_val_path)
+    train_ds    = instanciate_image_dataset_csv(csv_train_path)
+    val_ds      = instanciate_image_dataset_csv(csv_val_path)
 
     train_T = Compose(
         RandRotate90d(keys=(["img", "seg"])),

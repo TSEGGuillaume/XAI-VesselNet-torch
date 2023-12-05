@@ -1,0 +1,14 @@
+{
+    "schedule": [
+        {
+            "data": [
+                "image_1.nii.gz"
+            ]
+        },
+        {
+            "data": [
+                "image_2.nii.gz"
+            ]
+        }
+    ]
+}
