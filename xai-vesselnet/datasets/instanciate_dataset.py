@@ -60,9 +60,11 @@ def create_training_loaders(csv_train_path:str, csv_val_path:str, input_size:tup
     val_ds      = instanciate_image_dataset(csv_val_path)
 
     train_T = Compose(
-        RandRotate90d(keys=(["img", "seg"])),
-        RandFlipd(keys=(["img", "seg"])),
-        RandGaussianSmoothd(keys=(["img", "seg"])),
+        [
+            RandRotate90d(keys=(["img", "seg"])),
+            RandFlipd(keys=(["img", "seg"])),
+            RandGaussianSmoothd(keys=(["img", "seg"])),
+        ]
     )
 
     patch_iterator = PatchIterd(
