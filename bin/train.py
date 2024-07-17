@@ -248,7 +248,7 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
 
 def main():
     from datasets.instanciate_dataset import create_training_loaders
-    from utils.logging_blocks import log_hardware
+    from utils.prebuilt_logs import log_hardware
 
     # Training parameters
     hyperparameters = load_training_hyperparameters(args.hyperparameters)

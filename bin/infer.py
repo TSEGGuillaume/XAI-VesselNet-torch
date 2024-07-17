@@ -50,7 +50,7 @@ def main():
 
     from datasets.instanciate_dataset import instanciate_image_dataset
     from models.instanciate_model import instanciate_model
-    from utils.logging_blocks import log_hardware
+    from utils.prebuilt_logs import log_hardware
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log_hardware(device)

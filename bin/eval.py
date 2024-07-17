@@ -68,7 +68,7 @@ def parse_arguments():
 
 def main():
     from utils.dataset_reader import parse_csv
-    from utils.logging_blocks import log_hardware
+    from utils.prebuilt_logs import log_hardware
     from models.instanciate_model import instanciate_model
     from datasets.instanciate_dataset import instanciate_image_dataset
 
