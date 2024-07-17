@@ -65,10 +65,12 @@ def parse_arguments():
 def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
     # Hyperparameters
     start_lr = hyperparameters["lr"]
+
     loss_function = DiceFocalLoss(
         include_background=False,
         sigmoid=True
     )  # TODO: Move to a cfg file and make a factory
+
     optimizer = torch.optim.Adam(
         model.parameters(),
         start_lr
@@ -107,8 +109,6 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
     epoch_len = round(
         len(list(train_loader.dataset)) / train_loader.batch_size
     )  
-
-    loss = 0.0
 
     for epoch in range(hyperparameters["epoch"]):
         model.train()
@@ -156,37 +156,33 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
             model.eval()
 
             with torch.no_grad():
-                val_images = None
-                val_labels = None
-                val_outputs = None
 
                 sw_batch_size = hyperparameters["batch_size"]
+                sw_patch_size = hyperparameters["patch_size"]
 
                 stime = time.time()
 
                 n_val = 0
                 global_val_loss = 0
+
                 for val_data in val_loader:
-                    val_images = val_data["img"].to(device)
-                    val_labels = val_data["seg"].to(device)
+                    val_inputs, val_labels = val_data["img"].to(device), val_data["seg"].to(device)
 
                     val_outputs = sliding_window_inference(
-                        val_images, hyperparameters["patch_size"], sw_batch_size, model
+                        val_inputs, sw_patch_size, sw_batch_size, model
                     )
-                    val_outputs = [
-                        post_transforms(i) for i in decollate_batch(val_outputs)
-                    ]
 
-                    # Compute loss and metric for current iteration
+                    # Compute the validation loss for current iteration
+                    loss = loss_function(val_outputs, val_labels)
+
+                    logger.debug(f"Current val loss : {loss.item()}")
+                    global_val_loss += loss.item()
+                    n_val += 1
+
+                    # Compute the metrics for current iteration
+                    val_outputs = torch.stack([post_transforms(i) for i in decollate_batch(val_outputs)]) # Decolate, post-process, re-stack 
+
                     val_metric(y_pred=val_outputs, y=val_labels)
-
-                    for val_output in val_outputs:
-                        loss = loss_function(
-                            torch.unsqueeze(val_output, axis=0), val_labels
-                        )
-                        logger.debug(f"Current val loss : {loss.item()}")
-                        global_val_loss += loss.item()
-                        n_val += 1
 
                 global_val_loss /= n_val
 
@@ -201,8 +197,8 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
                     best_metric_epoch = epoch + 1
                     torch.save(
                         {
-                            'model_state_dict': model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict()
+                            "model_state_dict": model.state_dict(),
+                            "optimizer_state_dict": optimizer.state_dict(),
                         },
                         os.path.join(cfg.result_dir, "weights", f"model_{timestamp}.pth")
                     )
@@ -222,7 +218,7 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
                 writer.add_scalar("val_mean_loss", global_val_loss, epoch + 1)
 
                 # Plot the last model output as GIF image in TensorBoard with the corresponding image and label
-                #plot_2d_or_3d_image(val_images, epoch + 1, writer, index=0, tag="image")
+                # plot_2d_or_3d_image(val_images, epoch + 1, writer, index=0, tag="image")
                 plot_2d_or_3d_image(val_labels, epoch + 1, writer, index=0, tag="label")
                 plot_2d_or_3d_image(
                     val_outputs, epoch + 1, writer, index=0, tag="output"
@@ -254,8 +250,8 @@ def main():
     log_hardware(device)
 
     # Model
-    in_channels     = hyperparameters["in_channels"]
-    out_channels    = hyperparameters["out_channels"]
+    in_channels = hyperparameters["in_channels"]
+    out_channels = hyperparameters["out_channels"]
     logger.debug(f"Input channels : {in_channels} | Output channels : {out_channels}")
 
     model = instanciate_model.instanciate_model(
