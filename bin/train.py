@@ -18,11 +18,14 @@ from monai.transforms import (
 from monai.metrics import DiceMetric
 from monai.losses import DiceFocalLoss
 from monai.inferers import sliding_window_inference
-from monai.data.utils import decollate_batch, first
+from monai.data.utils import decollate_batch
 from monai.visualize.img2tensorboard import plot_2d_or_3d_image
 
+from utils.configuration import Configuration
+from utils.prebuilt_logs import log_hardware
 from utils.load_hyperparameters import load_hyperparameters
 from models import instanciate_model
+from datasets.instanciate_dataset import create_training_loaders
 
 
 def parse_arguments():
@@ -232,9 +235,6 @@ def fit(model, train_loader, val_loader, hyperparameters: dict, device="cpu"):
 
 
 def main():
-    from datasets.instanciate_dataset import create_training_loaders
-    from utils.prebuilt_logs import log_hardware
-
     # Training parameters
     hyperparameters = load_hyperparameters(args.hyperparameters)
 
@@ -263,8 +263,6 @@ def main():
 
 
 if __name__ == "__main__":
-    from utils.configuration import Configuration
-
     cfg = Configuration(p_filename="./resources/default.ini")
 
     args = parse_arguments()
