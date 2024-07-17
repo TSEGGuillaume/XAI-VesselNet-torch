@@ -1,10 +1,9 @@
 import argparse
 import logging
+
 from datetime import datetime
 import time
 import os
-
-from utils.load_hyperparameters import load_hyperparameters
 
 import numpy as np
 import random
@@ -22,6 +21,7 @@ from monai.inferers import sliding_window_inference
 from monai.data.utils import decollate_batch, first
 from monai.visualize.img2tensorboard import plot_2d_or_3d_image
 
+from utils.load_hyperparameters import load_hyperparameters
 from models import instanciate_model
 
 
@@ -54,7 +54,9 @@ def parse_arguments():
         "-p",
         type=str,
         metavar=("HYPERPARAMETERS_JSON_PATH"),
-        default=os.path.join(cfg.workspace, "resources", "default_hyperparameters.json"),
+        default=os.path.join(
+            cfg.workspace, "resources", "default_hyperparameters.json"
+        ),
         help="Path to the hyperparameters JSON",
     )
 
@@ -62,26 +64,21 @@ def parse_arguments():
     return args
 
 
-def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
+def fit(model, train_loader, val_loader, hyperparameters: dict, device="cpu"):
     # Hyperparameters
     start_lr = hyperparameters["lr"]
 
     loss_function = DiceFocalLoss(
-        include_background=False,
-        sigmoid=True
+        include_background=False, sigmoid=True
     )  # TODO: Move to a cfg file and make a factory
 
     optimizer = torch.optim.Adam(
-        model.parameters(),
-        start_lr
+        model.parameters(), start_lr
     )  # TODO: Move to a cfg file and make a factory
 
     # Validation settings
     val_metric = DiceMetric(include_background=False, reduction="mean")
-    post_transforms = Compose([
-        Activations(sigmoid=True),
-        AsDiscrete(threshold=0.5)
-    ])
+    post_transforms = Compose([Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
 
     # Summary writer to track training
     writer = SummaryWriter(
@@ -105,10 +102,8 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
     """
     Approximation, len(dataloader) does not work because we are working on an IterableDataset.
     Manual says that for IterableDataset, len(dataloader) return an approximation of len(dataset) / batch_size, with proper rounding but error here.
-    """ 
-    epoch_len = round(
-        len(list(train_loader.dataset)) / train_loader.batch_size
-    )  
+    """
+    epoch_len = round(len(list(train_loader.dataset)) / train_loader.batch_size)
 
     for epoch in range(hyperparameters["epoch"]):
         model.train()
@@ -180,7 +175,9 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
                     n_val += 1
 
                     # Compute the metrics for current iteration
-                    val_outputs = torch.stack([post_transforms(i) for i in decollate_batch(val_outputs)]) # Decolate, post-process, re-stack 
+                    val_outputs = torch.stack(
+                        [post_transforms(i) for i in decollate_batch(val_outputs)]
+                    )  # Decolate, post-process, re-stack
 
                     val_metric(y_pred=val_outputs, y=val_labels)
 
@@ -188,7 +185,9 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
 
                 etime = time.time()
 
-                metric = val_metric.aggregate().item() # Aggregate the final mean dice result
+                metric = (
+                    val_metric.aggregate().item()
+                ) # Aggregate the final mean dice result
                 val_metric.reset()  # Reset the status for next validation round
                 metric_values.append(metric)
 
@@ -200,7 +199,9 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
                             "model_state_dict": model.state_dict(),
                             "optimizer_state_dict": optimizer.state_dict(),
                         },
-                        os.path.join(cfg.result_dir, "weights", f"model_{timestamp}.pth")
+                        os.path.join(
+                            cfg.result_dir, "weights", f"model_{timestamp}.pth"
+                        ),
                     )
                     logger.debug("Saved new best performing model")
 
@@ -242,7 +243,7 @@ def main():
         args.csv_train,
         args.csv_val,
         hyperparameters["patch_size"],
-        hyperparameters["batch_size"]
+        hyperparameters["batch_size"],
     )
 
     # Device
@@ -255,19 +256,10 @@ def main():
     logger.debug(f"Input channels : {in_channels} | Output channels : {out_channels}")
 
     model = instanciate_model.instanciate_model(
-        args.model,
-        spatial_dims=3,
-        in_channels=in_channels,
-        out_channels=out_channels
+        args.model, spatial_dims=3, in_channels=in_channels, out_channels=out_channels
     ).to(device)
 
-    fit(
-        model,
-        train_loader,
-        val_loader,
-        hyperparameters=hyperparameters,
-        device=device
-    )
+    fit(model, train_loader, val_loader, hyperparameters=hyperparameters, device=device)
 
 
 if __name__ == "__main__":
