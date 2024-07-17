@@ -4,6 +4,8 @@ from datetime import datetime
 import time
 import os
 
+from utils.load_hyperparameters import load_hyperparameters
+
 import numpy as np
 import random
 
@@ -52,26 +54,12 @@ def parse_arguments():
         "-p",
         type=str,
         metavar=("HYPERPARAMETERS_JSON_PATH"),
-        default=None,
+        default=os.path.join(cfg.workspace, "resources", "default_hyperparameters.json"),
         help="Path to the hyperparameters JSON",
     )
 
     args = parser.parse_args()
     return args
-
-
-def load_training_hyperparameters(json_path: str):
-    import json
-
-    if json_path is None:
-        json_path = os.path.join(cfg.workspace, "resources", "default_hyperparameters.json")
-    
-    with open(json_path, "r") as f:
-        training_cfg = json.load(f)
-        logger.debug(
-            "Loading hyperparameters from {} \n {}".format(json_path, training_cfg)
-        )
-        return training_cfg
 
 
 def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
@@ -251,7 +239,7 @@ def main():
     from utils.prebuilt_logs import log_hardware
 
     # Training parameters
-    hyperparameters = load_training_hyperparameters(args.hyperparameters)
+    hyperparameters = load_hyperparameters(args.hyperparameters)
 
     # Dataset loaders
     train_loader, val_loader = create_training_loaders(

@@ -2,6 +2,8 @@ import argparse
 import logging
 import os
 
+from utils.load_hyperparameters import load_hyperparameters
+
 import torch
 import monai
 from monai.data import DataLoader
@@ -59,6 +61,14 @@ def parse_arguments():
         default=None,
         help="Path to the masks CSV",
     )
+    parser.add_argument(
+        "--hyperparameters",
+        "-p",
+        type=str,
+        metavar=("HYPERPARAMETERS_JSON_PATH"),
+        default=os.path.join(cfg.workspace, "resources", "default_hyperparameters.json"),
+        help="Path to the hyperparameters JSON",
+    )
 
     parser.add_argument("--verbose", "-v", action="count", default=0)
 
@@ -74,6 +84,8 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log_hardware(device)
+
+    hyperparameters = load_hyperparameters(args.hyperparameters)
 
     infer_ds = instanciate_image_dataset(args.csv_eval, image_only=False)
     infer_loader = DataLoader(infer_ds, batch_size=1, num_workers=0) # Batch_size must be equal to 1 as input tensors does not have equal spatial dims. See sw_batch_size for parallelization.
@@ -99,7 +111,7 @@ def main():
     model.eval()
 
     # Inference parameters
-    sw_shape = (64, 64, 64)  # TODO: Read from the --hyperparameters
+    sw_shape = hyperparameters["patch_size"]
     sw_batch_size = 64  # TODO: Move into a cfg file
     sw_overlap = 0.25  # TODO: Move into a cfg file
 

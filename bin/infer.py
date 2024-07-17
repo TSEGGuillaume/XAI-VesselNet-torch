@@ -2,6 +2,8 @@ import argparse
 import logging
 import os
 
+from utils.load_hyperparameters import load_hyperparameters
+
 import models.instanciate_model
 
 def parse_arguments():
@@ -26,6 +28,14 @@ def parse_arguments():
         type=str,
         metavar=("INFER_CSV_PATH"),
         help="Path to the inference CSV",
+    )
+    parser.add_argument(
+        "--hyperparameters",
+        "-p",
+        type=str,
+        metavar=("HYPERPARAMETERS_JSON_PATH"),
+        default=os.path.join(cfg.workspace, "resources", "default_hyperparameters.json"),
+        help="Path to the hyperparameters JSON",
     )
 
     parser.add_argument("--verbose", "-v", action="count", default=0)
@@ -55,6 +65,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log_hardware(device)
 
+    hyperparameters = load_hyperparameters(args.hyperparameters)
+
     infer_ds = instanciate_image_dataset(args.csv_infer, image_only=False)
     infer_loader = DataLoader(infer_ds, batch_size=1, num_workers=0) # Note: batch_size must be equal to 1 because input tensors does not have equal spatial dims. See sw_batch_size instead
 
@@ -83,7 +95,7 @@ def main():
     model.eval()
 
     # Inference parameters
-    sw_shape = (64, 64, 64) # TODO: Read from the --hyperparameters
+    sw_shape = hyperparameters["patch_size"]
     sw_batch_size = 64 # TODO: Move to a cfg file
     sw_overlap = 0.25 # TODO: Move to a cfg file
 
