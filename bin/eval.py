@@ -104,7 +104,7 @@ def main():
     )
 
     # Model
-    in_channels = first(infer_loader)["img"].shape[1]  # We suppose the same input channels through the whole dataset
+    in_channels = hyperparameters["in_channels"]
 
     model = instanciate_model(args.model, in_channels=in_channels).to(device)
     model.load_state_dict(torch.load(args.weights)["model_state_dict"])

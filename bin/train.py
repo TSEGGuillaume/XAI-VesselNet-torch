@@ -254,7 +254,7 @@ def main():
     log_hardware(device)
 
     # Model
-    in_channels = first(train_loader)["img"].shape[1] # We assume the same input channels through the whole datasets ; N, C, H, W, [D]
+    in_channels = hyperparameters["in_channels"]
     logger.debug(f"Input channels : {in_channels}")
 
     model = instanciate_model.instanciate_model(
