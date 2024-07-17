@@ -104,16 +104,24 @@ def main():
     )
 
     # Model
-    in_channels = hyperparameters["in_channels"]
+    in_channels     = hyperparameters["in_channels"]
+    out_channels    = hyperparameters["out_channels"]
+    logger.debug(f"Input channels : {in_channels} | Output channels : {out_channels}")
 
-    model = instanciate_model(args.model, in_channels=in_channels).to(device)
+    model = instanciate_model(
+        args.model,
+        spatial_dims=3,
+        in_channels=in_channels,
+        out_channels=out_channels
+    ).to(device)
+
     model.load_state_dict(torch.load(args.weights)["model_state_dict"])
     model.eval()
 
     # Inference parameters
-    sw_shape = hyperparameters["patch_size"]
-    sw_batch_size = 64  # TODO: Move into a cfg file
-    sw_overlap = 0.25  # TODO: Move into a cfg file
+    sw_batch_size   = hyperparameters["batch_size"]
+    sw_shape        = hyperparameters["patch_size"]
+    sw_overlap      = hyperparameters["patch_overlap"]
 
     inferer = SlidingWindowInferer(
         sw_shape,

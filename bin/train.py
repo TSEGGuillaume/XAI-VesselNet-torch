@@ -254,14 +254,15 @@ def main():
     log_hardware(device)
 
     # Model
-    in_channels = hyperparameters["in_channels"]
-    logger.debug(f"Input channels : {in_channels}")
+    in_channels     = hyperparameters["in_channels"]
+    out_channels    = hyperparameters["out_channels"]
+    logger.debug(f"Input channels : {in_channels} | Output channels : {out_channels}")
 
     model = instanciate_model.instanciate_model(
         args.model,
         spatial_dims=3,
         in_channels=in_channels,
-        out_channels=1
+        out_channels=out_channels
     ).to(device)
 
     fit(
