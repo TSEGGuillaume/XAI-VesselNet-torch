@@ -71,16 +71,19 @@ def parse_arguments():
     return args
 
 
-def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperparameters: dict, device:device="cpu"):
+def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperparameters: dict, device:device="cpu") -> None:
     """
     Fit the model
 
-    Args
+    Args:
         model           : The model
         train_loader    : The dataloader for training
         val_loader      : The dataloader for validation
         hyperparameters : The dictionary of hyperparameters
         device          : The device. Default to "cpu"
+
+    Returns:
+        None
     """
     # Training hyperparameters
     start_lr    = hyperparameters["lr"]
