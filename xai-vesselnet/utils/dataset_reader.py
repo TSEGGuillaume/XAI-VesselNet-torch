@@ -22,7 +22,8 @@ def parse_csv(csv_path: str, delimiter: str = ";") -> list[list[str]]:
 
         return data
 
-def parse_dataset_csv(csv_path: str, delimiter: str =';') -> tuple[list]:
+
+def parse_dataset_csv(csv_path: str, delimiter: str = ";") -> tuple[list]:
     """
     Read a CSV file (read-only) built as a dataset.
     Each line of the file must contain a paired [image, segmentation] separated by the delimiter, for training or evaluation, or a single image, for inference.
