@@ -7,6 +7,7 @@ import os
 
 import numpy as np
 import random
+from math import ceil
 
 import torch
 from torch.nn import Module
@@ -123,7 +124,7 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
     Approximation, len(dataloader) does not work because we are working on an IterableDataset.
     Manual says that for IterableDataset, len(dataloader) return an approximation of len(dataset) / batch_size, with proper rounding but error here.
     """
-    epoch_len = round(len(list(train_loader.dataset)) / train_loader.batch_size)
+    epoch_len = ceil(len(list(train_loader.dataset)) / train_loader.batch_size)
 
     for idx_epoch in range(1, max_epoch + 1):
         model.train()
