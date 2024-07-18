@@ -23,6 +23,7 @@ from monai.metrics import DiceMetric
 from monai.losses import DiceFocalLoss
 from monai.inferers import sliding_window_inference
 from monai.data.utils import decollate_batch
+from monai.networks.utils import one_hot as OneHotEncoding
 from monai.visualize.img2tensorboard import plot_2d_or_3d_image
 
 from utils.configuration import Configuration
@@ -89,12 +90,14 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
     start_lr    = hyperparameters["lr"]
     max_epoch   = hyperparameters["epoch"]
 
+    include_background = False
+
     optimizer = torch.optim.Adam(
         model.parameters(), start_lr
     )  # TODO: Move to a cfg file and make a factory
 
     loss_function = DiceFocalLoss(
-        include_background=False, sigmoid=True, reduction="mean"
+        include_background=include_background, softmax=True, to_onehot_y=True, reduction="mean"
     )  # TODO: Move to a cfg file and make a factory
 
     # Validation hyperparameters
@@ -103,10 +106,10 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
     sw_batch_size = hyperparameters["batch_size"] # How many sliding windows processed at the same time
     sw_patch_size = hyperparameters["patch_size"]
     
-    val_metric = DiceMetric(include_background=False, reduction="mean")
+    val_metric = DiceMetric(include_background=include_background, reduction="mean")
 
     # Define the post-processing (apply to compute val_metric)
-    post_transforms = Compose([Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
+    post_transforms = Compose([Activations(softmax=True), AsDiscrete(threshold=0.5)])
 
     # Instanciate SummaryWriter to track the training process
     writer = SummaryWriter(
@@ -197,7 +200,9 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
                         [post_transforms(i) for i in decollate_batch(val_outputs)]
                     )  # Decolate to post-process and re-stack
 
-                    val_metric(y_pred=val_outputs, y=val_labels) # Compute the metrics for current validation
+                    val_labels_ohe = OneHotEncoding(labels=val_labels, num_classes=val_outputs.shape[1])
+
+                    val_metric(y_pred=val_outputs, y=val_labels_ohe) # Compute the metrics for current validation
 
                 val_avg_loss /= val_count
 
@@ -237,8 +242,9 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
 
                 # Plot the last model output as GIF image in TensorBoard with the corresponding image and label
                 plot_2d_or_3d_image(val_labels, idx_epoch, writer, index=0, tag="label")
+
                 plot_2d_or_3d_image(
-                    val_outputs, idx_epoch, writer, index=0, tag="output"
+                    val_outputs, idx_epoch, writer, index=0, max_channels=val_outputs.shape[1], tag="output_"
                 )
 
     logger.info(
