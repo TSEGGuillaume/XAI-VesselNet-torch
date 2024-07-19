@@ -35,6 +35,7 @@ from datasets.instanciate_dataset import instanciate_image_dataset
 from utils.load_hyperparameters import load_hyperparameters
 from utils.dataset_reader import parse_csv
 from utils.prebuilt_logs import log_hardware
+from metrics.cldice import clDiceMetric
 
 from infer import infer
 
@@ -140,6 +141,7 @@ def evaluate(ys_pred: list[MetaTensor], ys_true: list[MetaTensor]) -> list[dict]
     # The metrics needs batch dimension (N, C, H, W, [D]) and one-hot-encoding (MONAI v1.1)
     mapping_name_metrics = {
         "Dice": DiceMetric(include_background=False, reduction="mean"),
+        "clDice":clDiceMetric(include_background=False, reduction="mean"),
         "ASSD": SurfaceDistanceMetric(
             include_background=False,
             symmetric=True,
