@@ -155,7 +155,7 @@ def infer(
         postprocessing  : the post transforms to apply
 
     Returns:
-        predictions (list[MetaTensor]) : The list of infered data.
+        predictions (list[MetaTensor]) : The list of infered data. `predictions` contains `ceil(count_data/batch_size)` MetaTensors (B,C,H,W,[D]) where `B=batch_size` except the last where `B=count_data%batch_size`
     """
 
     if isinstance(data, DataLoader) == False:
