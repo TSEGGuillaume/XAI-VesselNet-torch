@@ -202,7 +202,7 @@ def print_evaluation_results(
         #     logger.debug(f"M: {mask_fnames[sample_idx]} :") # Only on debug
 
         for k, v in res_metrics[sample_idx].items():
-            logger.info(f"      * {k}: {v}")
+            logger.info(f"      * {k}:\t{v}")
 
 
 def main():
