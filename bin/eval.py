@@ -255,7 +255,7 @@ def main():
     # To save the image. Deported from the inference function to allow customization
     save_seg = SaveImage(
         output_dir=os.path.join(cfg.result_dir, "inferences"),
-        output_ext=".nii",
+        output_ext=".nii.gz",
         output_postfix=f"seg_{model_id}",
         resample=False,
         separate_folder=False,
