@@ -1,9 +1,11 @@
 import argparse
 import os
 
-from monai.transforms import LoadImage, AsDiscrete, SaveImage
 import pandas as pd
 import numpy as np
+
+from monai.transforms import LoadImage, AsDiscrete, SaveImage
+from monai.data.utils import iter_patch
 
 from scipy import ndimage as ndi
 
@@ -12,19 +14,18 @@ from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2Image
 from utils.load_hyperparameters import load_hyperparameters 
 
 
-#TODO: Write the 'patch' version of this function:
-#   1/ Duplicate the lines according to the number of patches involved: add to the Dataframe a column patch_pos and patch_id.
-#   2/ Filter the lines
-#   3/ Choose X random points (minimum 100 except in the case where the number of lines after filtering is lower, in this case X=count_min)
-#   4/ Save in a file the subsampled list of the graph: [type;id;patch_pos]
-#   5/ Temporarily modify compute_attribution.py so that it no longer iterates over the complete graph but the subsampled file"
-
-
 def parse_arguments():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "image_path",
+        "y_pred_path",
+        type=str,
+        metavar=("PREDICTION_PATH"),
+        help="Path to the prediction to analyse for subsampling",
+    )
+
+    parser.add_argument(
+        "y_true_path",
         type=str,
         metavar=("IMAGE_PATH"),
         help="Path to the prediction to analyse for subsampling",
@@ -71,19 +72,29 @@ def distance_map(I: np.ndarray, method: str = "edt") -> np.ndarray:
     return distance_map
 
 
-def apply_filter_on_df(df: pd.DataFrame, filter: dict):
+def apply_filter_on_df(df: pd.DataFrame, filter: dict) -> pd.DataFrame:
     bool_df = True
     for k, v in filter.items():
         bool_df = bool_df & (df[k]==v)
 
     return df.loc[bool_df]
 
-def main(image_path, graph_path, hyperparameters_path):
-    # Load image as binary segmentation. /!\ We assume the loaded image has been previously activated
-    I, meta = LoadImage(ensure_channel_first=True, image_only=False)(image_path)
+
+def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_path: str):
+
+    I_y_pred, meta  = LoadImage(ensure_channel_first=True, image_only=False)(y_pred_path)
+    I_y_true        = LoadImage(ensure_channel_first=True, image_only=True)(y_true_path)
+    
+    print("Prediction :", I_y_pred.shape, "| Ground-truth :", I_y_true.shape)
 
     affine = meta["affine"]
-    output_channels = load_hyperparameters(hyperparameters_path)["out_channels"]
+
+    # Parameters
+    hyperparameters = load_hyperparameters(hyperparameters_path)
+
+    output_channels = hyperparameters["out_channels"]
+    sw_shape        = [output_channels] + hyperparameters["patch_size"] # iter_patch needs all the dimensions !
+    sw_overlap      = hyperparameters["patch_overlap"]
 
     if output_channels == 1:
         idx_vessel_channel = 0
@@ -92,66 +103,127 @@ def main(image_path, graph_path, hyperparameters_path):
     else:
         raise RuntimeError("Only binary segmentation supported (single-channel or OHE.)")
 
-    I = AsDiscrete(threshold=0.5)(I)
-    I_skel = distance_map(I[idx_vessel_channel])
+    # Preprocess image
+    # Binarize the prediction. /!\ We assume the loaded image has been previously activated
+    I_y_pred = AsDiscrete(threshold=0.5)(I_y_pred)
+    I_y_true_skel = distance_map(I_y_true[0]) # Ground-truth is not OHE
 
-    SaveImage(output_dir=".", output_ext=".nii.gz", output_postfix=f"edt", resample=False, separate_folder=False,)( np.expand_dims(I_skel, axis=0), meta) # TEMP
+    print("Binary prediction :", I_y_pred.shape, "| Skeleton :", I_y_true_skel.shape )
 
+    SaveImage(output_dir="./skel", output_ext=".nii.gz", output_postfix=f"edt", resample=False, separate_folder=False,)( np.expand_dims(I_y_true_skel, axis=0), meta )
+
+    # Graph
     graph = LoadVesselGraph(graph_path)
     graph = Anatomic2Image(graph, affine)
 
-    df = pd.DataFrame(columns=["type", "id", "degree", "thickness", "pred_status"])
+    df = pd.DataFrame(columns=["type", "id", "pred_status", "patch_pos", "idx_patch", "degree", "thickness"])
     
+    # Loop over nodes
     for node_id, node in graph.nodes.items():
-        if output_channels == 1:
-            idx_vessel_channel = 0
-        elif output_channels == 2:
-            idx_vessel_channel = 1
-        else:
-            raise RuntimeError("Only binary segmentation supported (single-channel or OHE.)")
+        
+        pred_status = "TP" if I_y_pred[idx_vessel_channel, node.pos[0], node.pos[1], node.pos[2]] == 1 else "FN"
+        thickness = I_y_true_skel[node.pos[0], node.pos[1], node.pos[2]]
 
-        pred_status = "TP" if I[idx_vessel_channel, node.pos[0], node.pos[1], node.pos[2]] == 1 else "FN"
+        patches = iter_patch(I_y_pred.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant") # Allow the reset at each node
 
-        # "type", "id", "degree", "thickness", "pred_status"
-        new_row = ["node", node_id, node.degree, float('NaN'), pred_status]
-        df = pd.concat([df, pd.DataFrame([new_row], columns=df.columns)], ignore_index=True)
+        idx_involved_patch = 0
+        for _, patch_pos in patches:
+            if (
+                node.pos[0] >= patch_pos[1,0] and node.pos[0] < patch_pos[1,1] and 
+                node.pos[1] >= patch_pos[2,0] and node.pos[1] < patch_pos[2,1] and 
+                node.pos[2] >= patch_pos[3,0] and node.pos[2] < patch_pos[3,1]
+            ):
+                # "type", "id", "degree", "thickness", "pred_status"
+                new_row = ["node", node_id, pred_status, patch_pos.tolist(), idx_involved_patch, node.degree, thickness]
+                df = pd.concat([df, pd.DataFrame([new_row], columns=df.columns)], ignore_index=True)
 
+                idx_involved_patch += 1
+
+    # Loop over centerlines
     for centerline_id, centerline in graph.connections.items():
         centerline_midpoint = centerline.getMidPoint()
 
-        pred_status = "TP" if I[idx_vessel_channel, centerline_midpoint.pos[0], centerline_midpoint.pos[1], centerline_midpoint.pos[2]] == 1 else "FN"
-        thickness = I_skel[centerline_midpoint.pos[0], centerline_midpoint.pos[1], centerline_midpoint.pos[2]]
-        # "type", "id", "degree", "thickness", "pred_status"
-        new_row = ["skvx", centerline_id, 2, thickness, pred_status]
-        df = pd.concat([df, pd.DataFrame([new_row], columns=df.columns)], ignore_index=True)
+        pred_status = "TP" if I_y_pred[idx_vessel_channel, centerline_midpoint.pos[0], centerline_midpoint.pos[1], centerline_midpoint.pos[2]] == 1 else "FN"
+        thickness = I_y_true_skel[centerline_midpoint.pos[0], centerline_midpoint.pos[1], centerline_midpoint.pos[2]]
+
+        patches = iter_patch(I_y_pred.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant")
+
+        idx_involved_patch = 0
+        for _, patch_pos in patches:
+            if (
+                centerline_midpoint.pos[0] >= patch_pos[1,0] and centerline_midpoint.pos[0] < patch_pos[1,1] and 
+                centerline_midpoint.pos[1] >= patch_pos[2,0] and centerline_midpoint.pos[1] < patch_pos[2,1] and 
+                centerline_midpoint.pos[2] >= patch_pos[3,0] and centerline_midpoint.pos[2] < patch_pos[3,1]
+            ):
+                new_row = ["skvx", centerline_id, pred_status, patch_pos.tolist(), idx_involved_patch, 2, thickness]
+                df = pd.concat([df, pd.DataFrame([new_row], columns=df.columns)], ignore_index=True)
+
+                idx_involved_patch += 1
+
+    print("Dataframe", df.shape)
 
     # Filter on columns value
-    filter = {
-        "pred_status": "FN",
-        "type": "skvx",
-        "degree": 2,
-    }
-    print("Filter on ", filter.values())
-    filtered_df = apply_filter_on_df(df, filter)
+    filters = [
+        {
+            "pred_status": "TP",
+            "type": "node",
+            "degree": 1,
+        },
+        {
+            "pred_status": "TP",
+            "type": "node",
+            "degree": 3,
+        },
+        {
+            "pred_status": "FN",
+            "type": "node",
+            "degree": 1,
+        },
+        {
+            "pred_status": "FN",
+            "type": "node",
+            "degree": 3,
+        },
+        {
+            "pred_status": "TP",
+            "type": "skvx",
+            "degree": 2,
+        },
+        {
+            "pred_status": "FN",
+            "type": "skvx",
+            "degree": 2,
+        }
+    ]
 
-    save_dir = "_".join(f"{_filter_val}" for _filter_val in filter.values())
+    for filter in filters:
+        filtered_df = apply_filter_on_df(df, filter)
+        print("Filter on ", filter.values(), "->", filtered_df.shape)
 
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+        # Save
+        save_dir = "_".join(f"{_filter_val}" for _filter_val in filter.values())
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
 
-    save_path = "./{}/{}_subsampling_landmarks.csv".format(
-        save_dir,
-        os.path.basename(meta["filename_or_obj"]).split('.')[0]
-    )
-    filtered_df.to_csv(save_path, sep=";")
-    print("Saved at ", save_path)
+        save_path = "./{}/{}_subsampling_landmarks.csv".format(
+            save_dir,
+            os.path.basename(meta["filename_or_obj"]).split('.')[0]
+        )
+
+        subsample_df = filtered_df.sample(n=min(100, len(filtered_df.index)), random_state=5) # seed for reproductibility
+
+        subsample_df.to_csv(save_path, sep=";")
+        print("Saved at ", save_path)
 
 
 if __name__ == "__main__":
     args = parse_arguments()
 
-    image_path = args.image_path
+    print(args)
+
+    y_pred_path = args.y_pred_path
+    y_true_path = args.y_true_path
     graph_path = args.graph_path
     hyperparameters_path = args.hyperparameters_path
 
-    main(image_path, graph_path, hyperparameters_path)
+    main(y_pred_path, y_true_path, graph_path, hyperparameters_path)
