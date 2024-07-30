@@ -2,6 +2,7 @@ import argparse
 import os
 import logging
 import time
+import csv
 
 import torch
 import numpy as np
@@ -21,6 +22,7 @@ from network.model_creator import init_inference_model
 
 from graph.graph import CGraph
 
+import ast
 
 def parse_arguments():
     parser = argparse.ArgumentParser()
@@ -52,31 +54,11 @@ def parse_arguments():
         help="Path to the graph (*.vvg)",
     )
 
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--node",
-        "-n",
-        type=int,
-        metavar=("ID_NODE"),
-        help="Id of the node to inspect",
-        default=None,
-    )
-    group.add_argument(
-        "--centerline",
-        "-c",
-        type=int,
-        metavar=("ID_CENTERLINE"),
-        help="Id of the centerline to inspect",
-        default=None,
-    )
-    group.add_argument(
-        "--position",
-        "-pos",
-        nargs=3,
-        type=int,
-        metavar=("X", "Y", "Z"),
-        help="Image coordinates X Y Z of the voxel to inspect",
-        default=None,
+    parser.add_argument(
+        "tasks_file",
+        type=str,
+        metavar=("TASKS_LIST_FILE"),
+        help="Path to CSV containing the list of positions to process",
     )
 
     parser.add_argument(
@@ -94,6 +76,24 @@ def parse_arguments():
 
     args = parser.parse_args()
     return args
+
+def read_task_list(tasks_file: str):
+    tasks_list = []
+
+    with open(tasks_file, 'r') as f: 
+        reader = csv.reader(f, delimiter=';') 
+
+        next(reader) # Ignore header
+        
+        for row in reader:
+            tasks_list.append({ 
+                "type": row[1],
+                "id": int(row[2]),
+                "patch_pos": row[4],
+                "idx_patch": row[5],
+            })
+    
+    return tasks_list
 
 
 def get_landmark_position(graph: CGraph, landmark_type: str=None, landmark_id: int|tuple=None) -> tuple[int]|None:
@@ -154,17 +154,7 @@ def main():
     graph_path      = args.graph_path
     hyperparameters_path  = args.hyperparameters
 
-    if args.node is not None:
-        landmark_type = "node"
-        landmark_id = args.node
-    elif args.centerline is not None:
-        landmark_type = "centerline"
-        landmark_id = args.centerline
-    elif args.position is not None:
-        landmark_type = "position"
-        landmark_id = args.position
-    else:
-        raise NotImplementedError("You should provide a node, acenterline or a position")
+    task_file_path  = args.tasks_file
 
     # Load hyperparameters for training
     hyperparameters = load_hyperparameters(hyperparameters_path)
@@ -181,8 +171,6 @@ def main():
     # Observation point
     vessel_graph = LoadVesselGraph(graph_path)
     vessel_graph = Anatomic2ImageGraph(vessel_graph, meta["original_affine"])
-
-    landmark_pos = get_landmark_position(graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id)
 
     # Load the trained model
     model = init_inference_model(
@@ -230,78 +218,99 @@ def main():
         output_dtype=I.dtype,
     )
 
-    patches = iter_patch(I.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant")
-    idx_involved_patch = 0
+    task_list = read_task_list(task_file_path)
 
-    for patch, pos in patches:
-        if (
-            landmark_pos[0] >= pos[1, 0]
-            and landmark_pos[0] < pos[1, 1]
-            and landmark_pos[1] >= pos[2, 0]
-            and landmark_pos[1] < pos[2, 1]
-            and landmark_pos[2] >= pos[3, 0]
-            and landmark_pos[2] < pos[3, 1]
-        ):
-            patch = (
-                torch.from_numpy(np.expand_dims(patch, axis=0))
-                .type(torch.FloatTensor)
-                .to(device)
-            )  # TODO: improve this conversion
-            patch.requires_grad = True  # Not sure this is requiered
+    logger.debug("Count tasks :{}".format(len(task_list)))
 
-            logger.debug(f"Patch shape: {patch.shape} - {pos.tolist()}")
+    for task in task_list:
+        print(task)
+        landmark_type = "centerline" if task["type"]=="skvx" else task["type"]
+        landmark_id = task["id"]
 
-            # Compute targeted landmark in the patch coordinate system
-            for idx_output_channel in range(out_channels):
-            # For outputs with > 2 dimensions, targets can be either:
-            #  - A single tuple, which contains #output_dims - 1 elements. This target index is applied to all examples.
-            #  - A list of tuples with length equal to the number of examples in inputs (dim 0), and each tuple containing #output_dims - 1 elements.
-            #     Each tuple is applied as the target for the corresponding example.
-                target = (
-                    idx_output_channel,
-                    landmark_pos[0] - pos[1, 0],
-                    landmark_pos[1] - pos[2, 0],
-                    landmark_pos[2] - pos[3, 0],
-                )
-                logger.info(f"Relative target: {target}")
+        landmark_pos = get_landmark_position(graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id)
+        task_pos = ast.literal_eval(task["patch_pos"]) # from the string representation to list 
+        
+        patches = iter_patch(I.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant")
+        idx_involved_patch = 0
 
-                for xai_key, xai_method in mapping.items():
+        for patch, pos in patches:
+            if (
+                landmark_pos[0] >= pos[1, 0]
+                and landmark_pos[0] < pos[1, 1]
+                and landmark_pos[1] >= pos[2, 0]
+                and landmark_pos[1] < pos[2, 1]
+                and landmark_pos[2] >= pos[3, 0]
+                and landmark_pos[2] < pos[3, 1]
+            ):
+                if (
+                    task_pos[1][0] == pos[1, 0]
+                    and task_pos[1][1] == pos[1, 1]
+                    and task_pos[2][0] == pos[2, 0]
+                    and task_pos[2][1] == pos[2, 1]
+                    and task_pos[3][0] == pos[3, 0]
+                    and task_pos[3][1] == pos[3, 1]
+                ):
+                    patch = (
+                        torch.from_numpy(np.expand_dims(patch, axis=0))
+                        .type(torch.FloatTensor)
+                        .to(device)
+                    )  # TODO: improve this conversion
+                    patch.requires_grad = True  # Not sure this is requiered
 
-                    stime = time.time()
-                    attribution = xai_method.attribute(
-                        inputs=patch, target=target, **kwargs[xai_key]
-                    )
-                    etime = time.time()
-                    logger.info(
-                        f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
-                    )
+                    logger.debug(f"Patch shape: {patch.shape} - {pos.tolist()}")
 
-                    logger.debug(
-                        "Attribution shape : {} | sum: {}".format(
-                            attribution.shape, torch.sum(attribution)
-                        )
-                    )
-
-                    # Saving the attribution of the patch
-                    output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weigths_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
-                    basic_postfix = f"{os.path.splitext(os.path.basename(weigths_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
-
-                    # Attribution channels are saved separately
-                    for idx_input_channel in range(in_channels):
-                        save.folder_layout.postfix = (
-                            basic_postfix + f"_ichan{idx_input_channel}"
-                        )  # Update the postfix to add index for channel
-                        save(attribution[0, idx_input_channel, :, :, :], meta_data=meta)
-
-                    # We could have avoided saving the position file for each attribution method, but it's easier to associate an attribution with a position if they share the same basename.
-                    with open(
-                        os.path.join(shared_output_dir, output_fname_pos + ".txt"), "w"
-                    ) as f:
-                        f.write(
-                            f"{pos[1,0]};{pos[1,1]}\n{pos[2,0]};{pos[2,1]}\n{pos[3,0]};{pos[3,1]}"
+                    # Compute targeted landmark in the patch coordinate system
+                    for idx_output_channel in range(out_channels):
+                    # For outputs with > 2 dimensions, targets can be either:
+                    #  - A single tuple, which contains #output_dims - 1 elements. This target index is applied to all examples.
+                    #  - A list of tuples with length equal to the number of examples in inputs (dim 0), and each tuple containing #output_dims - 1 elements.
+                    #     Each tuple is applied as the target for the corresponding example.
+                        target = (
+                            idx_output_channel,
+                            landmark_pos[0] - pos[1, 0],
+                            landmark_pos[1] - pos[2, 0],
+                            landmark_pos[2] - pos[3, 0],
                         )
 
-            idx_involved_patch += 1
+                        logger.info(f"Relative target: {target}")
+
+                        for xai_key, xai_method in mapping.items():
+
+                            stime = time.time()
+                            attribution = xai_method.attribute(
+                                inputs=patch, target=target, **kwargs[xai_key]
+                            )
+                            etime = time.time()
+                            logger.info(
+                                f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
+                            )
+
+                            logger.debug(
+                                "Attribution shape : {} | sum: {}".format(
+                                    attribution.shape, torch.sum(attribution)
+                                )
+                            )
+
+                            # Saving the attribution of the patch
+                            output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weigths_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
+                            basic_postfix = f"{os.path.splitext(os.path.basename(weigths_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
+
+                            # Attribution channels are saved separately
+                            for idx_input_channel in range(in_channels):
+                                save.folder_layout.postfix = (
+                                    basic_postfix + f"_ichan{idx_input_channel}"
+                                )  # Update the postfix to add index for channel
+                                save(attribution[0, idx_input_channel, :, :, :], meta_data=meta)
+
+                            # We could have avoided saving the position file for each attribution method, but it's easier to associate an attribution with a position if they share the same basename.
+                            with open(
+                                os.path.join(shared_output_dir, output_fname_pos + ".txt"), "w"
+                            ) as f:
+                                f.write(
+                                    f"{pos[1,0]};{pos[1,1]}\n{pos[2,0]};{pos[2,1]}\n{pos[3,0]};{pos[3,1]}"
+                                )
+
+                idx_involved_patch += 1
 
 
 if __name__ == "__main__":

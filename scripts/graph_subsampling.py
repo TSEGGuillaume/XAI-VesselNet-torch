@@ -27,8 +27,8 @@ def parse_arguments():
     parser.add_argument(
         "y_true_path",
         type=str,
-        metavar=("IMAGE_PATH"),
-        help="Path to the prediction to analyse for subsampling",
+        metavar=("GROUNDTRUTH_PATH"),
+        help="Path to the ground-truth",
     )
 
     parser.add_argument(
@@ -43,6 +43,15 @@ def parse_arguments():
         type=str,
         metavar=("HYPERPARAMETERS_PATH"),
         help="Path to the hyperparameters file",
+    )
+
+    parser.add_argument(
+        "--savedir",
+        "-s",
+        type=str,
+        metavar=("SAVE_DIRECTORY"),
+        default=".",
+        help="Path to the directory to save results",
     )
 
     args = parser.parse_args()
@@ -80,7 +89,9 @@ def apply_filter_on_df(df: pd.DataFrame, filter: dict) -> pd.DataFrame:
     return df.loc[bool_df]
 
 
-def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_path: str):
+def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_path: str, user_save_dir: str):
+
+    save_dir = user_save_dir
 
     I_y_pred, meta  = LoadImage(ensure_channel_first=True, image_only=False)(y_pred_path)
     I_y_true        = LoadImage(ensure_channel_first=True, image_only=True)(y_true_path)
@@ -94,7 +105,7 @@ def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_pa
 
     output_channels = hyperparameters["out_channels"]
     sw_shape        = [output_channels] + hyperparameters["patch_size"] # iter_patch needs all the dimensions !
-    sw_overlap      = hyperparameters["patch_overlap"]
+    sw_overlap      = [0] + [hyperparameters["patch_overlap"]] * len(hyperparameters["patch_size"])
 
     if output_channels == 1:
         idx_vessel_channel = 0
@@ -110,7 +121,7 @@ def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_pa
 
     print("Binary prediction :", I_y_pred.shape, "| Skeleton :", I_y_true_skel.shape )
 
-    SaveImage(output_dir="./skel", output_ext=".nii.gz", output_postfix=f"edt", resample=False, separate_folder=False,)( np.expand_dims(I_y_true_skel, axis=0), meta )
+    SaveImage(output_dir=f"{save_dir}/skel", output_ext=".nii.gz", output_postfix=f"edt", resample=False, separate_folder=False,)( np.expand_dims(I_y_true_skel, axis=0), meta )
 
     # Graph
     graph = LoadVesselGraph(graph_path)
@@ -201,11 +212,14 @@ def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_pa
         print("Filter on ", filter.values(), "->", filtered_df.shape)
 
         # Save
-        save_dir = "_".join(f"{_filter_val}" for _filter_val in filter.values())
+        save_dir = os.path.join(
+            save_dir,
+            "_".join(f"{_filter_val}" for _filter_val in filter.values())
+        )
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
-        save_path = "./{}/{}_subsampling_landmarks.csv".format(
+        save_path = "{}/{}_subsampling_landmarks.csv".format(
             save_dir,
             os.path.basename(meta["filename_or_obj"]).split('.')[0]
         )
@@ -226,4 +240,6 @@ if __name__ == "__main__":
     graph_path = args.graph_path
     hyperparameters_path = args.hyperparameters_path
 
-    main(y_pred_path, y_true_path, graph_path, hyperparameters_path)
+    user_save_dir = args.savedir
+
+    main(y_pred_path, y_true_path, graph_path, hyperparameters_path, user_save_dir)
