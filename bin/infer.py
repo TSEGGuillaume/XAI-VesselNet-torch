@@ -82,14 +82,14 @@ def infer_patch(
     patch_pos: list,
     input_size: tuple,
     postprocessing: Transform = None,
-):
+) -> list[MetaTensor]:
     """
     Create a patch from a provided spatial position and infer this patch.
     The position of the patch must be a tuple list in the following format [ (start, ), (end, ) ].
     The input size (patch size) is used to pad the patch if the end position of the roi exceed the image size.
     To save the result of the inferences, compose the post-processing with a `SaveImage` object.
 
-    Args
+    Args:
         model           : The trained model
         data            : The image data
         device          : The device to store the model
@@ -97,7 +97,7 @@ def infer_patch(
         input_size      : The input size (patch size)
         postprocessing  : the post transforms to apply
 
-    Returns
+    Returns:
         predictions (list[MetaTensor]) : The list of infered patch.
     """
 
