@@ -214,7 +214,7 @@ def main():
 
     # Define variables from user args
     model_name = args.model
-    weigths_path = args.weights
+    weights_path = args.weights
     dataset_path = args.data
 
     # Load hyperparameters for training
@@ -226,7 +226,7 @@ def main():
     # Load the trained model
     model = init_inference_model(
         model_name=model_name,
-        weigths_path=weigths_path,
+        weights_path=weights_path,
         in_channels=in_channels,
         out_channels=out_channels,
         device=device,

@@ -102,7 +102,7 @@ def main():
 
     # Variables
     model_name      = args.model
-    weigths_path    = args.weights
+    weights_path    = args.weights
     x_path          = args.img_path
     graph_path      = args.graph_path
     hyperparameters_path  = args.hyperparameters
@@ -140,7 +140,7 @@ def main():
     # Load the trained model
     model = init_inference_model(
         model_name=model_name,
-        weigths_path=weigths_path,
+        weights_path=weights_path,
         in_channels=in_channels,
         out_channels=out_channels,
         device=device,
@@ -236,8 +236,8 @@ def main():
                     )
 
                     # Saving the attribution of the patch
-                    output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weigths_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
-                    basic_postfix = f"{os.path.splitext(os.path.basename(weigths_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
+                    output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
+                    basic_postfix = f"{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
 
                     # Attribution channels are saved separately
                     for idx_input_channel in range(in_channels):
