@@ -6,7 +6,7 @@ import torch
 from torch.nn import Module
 
 from monai.data.meta_tensor import MetaTensor
-from monai.inferers import Inferer, SimpleInferer
+from monai.inferers import Inferer, SimpleInferer, SlidingWindowInferer
 
 from monai.data import DataLoader, ArrayDataset
 from monai.transforms import (
@@ -20,7 +20,6 @@ from monai.transforms import (
 )
 from monai.transforms import SaveImage
 
-from monai.inferers import SlidingWindowInferer
 from monai.data.utils import decollate_batch, first
 
 from models import instanciate_model
