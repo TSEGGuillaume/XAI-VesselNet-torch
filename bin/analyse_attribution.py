@@ -12,6 +12,7 @@ from torch import device
 from monai.data.meta_tensor import MetaTensor
 from monai.transforms import (
     LoadImage,
+    SaveImage,
     Compose,
     SpatialCrop,
     SpatialPad,
@@ -516,14 +517,38 @@ def main():
     # ------------------------ #
     #     CREATE JSON FILE     #
     # ------------------------ #
-    logger.info("Create JSON output file ...")
+    logger.info("Create output file(s) ...")
     logger.info("___________________________")
+
+    _SAVE_INTERMEDIATE_RES = True
+
+    if _SAVE_INTERMEDIATE_RES == True:
+        # Completely awful but very useful
+        SaveImage(
+            output_dir=os.path.join(cfg.result_dir, "blobs"),
+            output_ext=".nii.gz",
+            output_postfix=f"blobs",
+            resample=False,
+            separate_folder=False
+        )(blobs_mask, meta_attribution)
+
+        model_id, _ = os.path.splitext(os.path.basename(weights_path))
+        idx_involved_patch = os.path.splitext(os.path.basename(attribution_path))[0].split("_")[8]
+        output_prefix = f"seg_{model_id}_{landmark_type}_{landmark_id}_{idx_involved_patch}"
+
+        SaveImage(
+            output_dir=os.path.join(cfg.result_dir, "inferences"),
+            output_ext=".nii.gz",
+            output_postfix=output_prefix,
+            resample=False,
+            separate_folder=False
+        )(y_pred_patch, meta_attribution)
 
     # Define the basic structure of the file
     res_output = {
         "point"         : {},
         "inference"     : {},
-        "attribution"   : {}
+        "attribution"   : {},
     }
 
     # Information about the landmark
