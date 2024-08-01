@@ -3,13 +3,13 @@ import logging
 
 import os
 
+import numpy as np
 import torch
 from torch.nn import Module
 from torch import device 
 
-import numpy as np
 from monai.data.meta_tensor import MetaTensor
-from monai.transforms import LoadImage, Compose, SpatialCrop, SpatialPad, Activations, AsDiscrete
+from monai.transforms import LoadImage, Compose, SpatialCrop, SpatialPad, Activations, AsDiscrete, ToTensor
 from monai.networks.utils import one_hot as OneHotEncoding
 from monai.data.utils import decollate_batch
 
@@ -20,6 +20,8 @@ from utils.get_landmark_from_args import get_landmark_position
 from utils.load_patch_position import read_path_position_from_file
 from network.model_creator import init_inference_model
 from utils.prebuilt_logs import log_hardware
+from image.vessel_thickness import compute_vessel_thickness
+from utils.distances import distance
 
 from infer import infer_patch
 from eval import evaluate
@@ -150,7 +152,7 @@ def eval_patch_prediction(model: Module, x: MetaTensor, y: MetaTensor, patch_pos
     return metrics, y_pred, y
 
 
-def analyse_prediction(model: Module, x: MetaTensor, y: MetaTensor, patch_pos: tuple, input_size: tuple, device: device, landmark_pos:tuple):
+def analyse_prediction(model: Module, x: MetaTensor, y: MetaTensor, patch_pos: tuple, input_size: tuple, device: device, relative_landmark_pos:tuple):
     """
     Perform a prediction on a patch and evaluate the resulting segmentation. Analyse the output values on a specific landmark position and define its status.
 
@@ -169,9 +171,9 @@ def analyse_prediction(model: Module, x: MetaTensor, y: MetaTensor, patch_pos: t
     metrics, y_pred, y_true = eval_patch_prediction(model, x, y, patch_pos, input_size, device)
 
     # Compute the relative position of the node in the provided patch
-    relative_landmark_x = landmark_pos[0] - patch_pos[0][0]
-    relative_landmark_y = landmark_pos[1] - patch_pos[0][1]
-    relative_landmark_z = landmark_pos[2] - patch_pos[0][2]
+    relative_landmark_x = relative_landmark_pos[0]
+    relative_landmark_y = relative_landmark_pos[1]
+    relative_landmark_z = relative_landmark_pos[2]
 
     output_channels = y_pred.shape[1]
     act = Activations(sigmoid=True, dim=1) if output_channels == 1 else Activations(softmax=True, dim=1)
@@ -219,7 +221,7 @@ def analyse_prediction(model: Module, x: MetaTensor, y: MetaTensor, patch_pos: t
         "metrics": metrics
     }
 
-    return pred_nfo
+    return pred_nfo, y_pred, y_true
 
 
 def main():
@@ -260,6 +262,12 @@ def main():
     I_x, meta   = LoadImage(image_only=False, ensure_channel_first=True)(x_path) # Assume x's metadata as reference
     I_y_true    = LoadImage(image_only=True, ensure_channel_first=True)(y_true_path)
 
+    # ------------------------ #
+    #   PREDICTIONS ANALYSIS   #
+    # ------------------------ #    
+    logger.info("Prediction analysis ...")
+    logger.info("_______________________")
+
     I_x         = I_x.to(device)
     I_y_true    = I_y_true.to(device)
 
@@ -271,8 +279,41 @@ def main():
 
     landmark_pos = get_landmark_position(graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id)
 
+    # Compute the relative position of the node in the provided patch
+    relative_landmark_pos = (
+        landmark_pos[0] - patch_pos[0][0],
+        landmark_pos[1] - patch_pos[0][1],
+        landmark_pos[2] - patch_pos[0][2],
+    )
+
     model = init_inference_model(model_name=model_name, weights_path=weights_path, in_channels=in_channels, out_channels=out_channels, device=device)
-    print(analyse_prediction(model=model, x=I_x, y=I_y_true, patch_pos=patch_pos, input_size=sw_shape, device=device, landmark_pos=landmark_pos))
+    pred_res, y_pred_patch, y_true_patch = analyse_prediction(model=model, x=I_x, y=I_y_true, patch_pos=patch_pos, input_size=sw_shape, device=device, relative_landmark_pos=relative_landmark_pos)
+
+    # ------------------------ #
+    #      OBJECT ANALYSIS     #
+    # ------------------------ #
+    logger.info("Vessel object analysis ...")
+    logger.info("__________________________")
+
+    transform_obj_analysis = Compose(
+        [
+            AsDiscrete(threshold=0.5), # Ensure the ground-truth is binary
+            ToTensor(),
+        ]
+    )
+
+    if out_channels == 2:
+        y_true_patch = y_true_patch[:, 1, :]
+    elif out_channels > 2:
+        raise ValueError("Non-binary models are not allowed")
+
+    logger.info("Compute global vessel size...")
+    vessel_thickness_global  = compute_vessel_thickness(torch.squeeze(transform_obj_analysis(I_y_true)), landmark_pos)
+    logger.info("Compute patch vessel size...")
+    vessel_thickness_patch   = compute_vessel_thickness(torch.squeeze(transform_obj_analysis(y_true_patch)), relative_landmark_pos)
+
+    relative_patch_center_pos = np.array(sw_shape) / 2
+    dist_landmark_from_patch_center = distance(relative_landmark_pos, relative_patch_center_pos, norm="L2")
 
 
 if __name__=="__main__":  
