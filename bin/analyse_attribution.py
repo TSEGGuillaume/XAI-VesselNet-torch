@@ -22,6 +22,8 @@ from monai.transforms import (
 from monai.networks.utils import one_hot as OneHotEncoding
 from monai.data.utils import decollate_batch
 
+from skimage.morphology import remove_small_objects
+
 from utils.load_hyperparameters import load_hyperparameters
 from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVesselGraph
 from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph
@@ -30,6 +32,7 @@ from utils.load_patch_position import read_path_position_from_file
 from network.model_creator import init_inference_model
 from utils.prebuilt_logs import log_hardware
 from image.vessel_thickness import compute_vessel_thickness
+from image.blobs import detect_blob, compute_blobs_properties
 from utils.distances import distance
 from metrics.total_variation import image_total_variation
 from metrics.descriptive_statistics import univariate_analysis
@@ -458,7 +461,30 @@ def main():
     logger.info("Compute image's total variation...")
     attribution_tv = image_total_variation(I_attribution, neighborhood="N26", norm="L1")
 
-    print(attribution_stats, attribution_tv)
+    # Detect the blobs in the attribution map and compute blobs' region properties
+    logger.info("Blob search...")
+    blobs_mask = remove_small_objects(
+        detect_blob(I_attribution).astype(bool), min_size=5
+    )  # For regionprops that requiere convex hull, we remove objects smaller that 4px
+
+    selected_props = [
+        "label",
+        "area",
+        "centroid",
+        "equivalent_diameter_area",
+        "feret_diameter_max",
+    ]
+
+    blobs_props, labeled_blobs, nblobs = compute_blobs_properties(
+        blobs_mask, selected_props
+    )
+    
+    # Analysis on blobs
+    for blob_idx in range(1, nblobs+1):
+        stats_blob = univariate_analysis(I_attribution[labeled_blobs==blob_idx])
+        stats_blob["area_check"] = np.sum(labeled_blobs==blob_idx)
+
+        blobs_props[blob_idx-1]["stats"] = stats_blob
 
 
 if __name__ == "__main__":
