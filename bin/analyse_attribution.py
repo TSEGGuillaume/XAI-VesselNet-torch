@@ -27,7 +27,7 @@ from skimage.morphology import remove_small_objects
 from utils.load_hyperparameters import load_hyperparameters
 from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVesselGraph
 from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph
-from utils.get_landmark_from_args import get_landmark_position
+from utils.get_landmark_from_args import get_landmark_obj
 from utils.load_patch_position import read_path_position_from_file
 from network.model_creator import init_inference_model
 from utils.prebuilt_logs import log_hardware
@@ -383,15 +383,15 @@ def main():
     vessel_graph = LoadVesselGraph(graph_path)
     vessel_graph = Anatomic2ImageGraph(vessel_graph, meta["original_affine"])
 
-    landmark_pos = get_landmark_position(
+    landmark = get_landmark_obj(
         graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id
     )
 
     # Compute the relative position of the node in the provided patch
     relative_landmark_pos = (
-        landmark_pos[0] - patch_pos[0][0],
-        landmark_pos[1] - patch_pos[0][1],
-        landmark_pos[2] - patch_pos[0][2],
+        landmark.pos[0] - patch_pos[0][0],
+        landmark.pos[1] - patch_pos[0][1],
+        landmark.pos[2] - patch_pos[0][2],
     )
 
     model = init_inference_model(
@@ -431,7 +431,7 @@ def main():
 
     logger.info("Compute global vessel size...")
     vessel_thickness_global = compute_vessel_thickness(
-        torch.squeeze(transform_obj_analysis(I_y_true)), landmark_pos
+        torch.squeeze(transform_obj_analysis(I_y_true)), landmark.pos
     )
     logger.info("Compute patch vessel size...")
     vessel_thickness_patch = compute_vessel_thickness(

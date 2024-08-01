@@ -17,7 +17,7 @@ from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVess
 from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph
 from utils.load_hyperparameters import load_hyperparameters
 from utils.prebuilt_logs import log_hardware
-from utils.get_landmark_from_args import get_landmark_position
+from utils.get_landmark_from_args import get_landmark_obj
 from network.model_creator import init_inference_model
 
 
@@ -135,7 +135,7 @@ def main():
     vessel_graph = LoadVesselGraph(graph_path)
     vessel_graph = Anatomic2ImageGraph(vessel_graph, meta["original_affine"])
 
-    landmark_pos = get_landmark_position(graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id)
+    landmark = get_landmark_obj(graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id)
 
     # Load the trained model
     model = init_inference_model(
@@ -188,12 +188,12 @@ def main():
 
     for patch, pos in patches:
         if (
-            landmark_pos[0] >= pos[1, 0]
-            and landmark_pos[0] < pos[1, 1]
-            and landmark_pos[1] >= pos[2, 0]
-            and landmark_pos[1] < pos[2, 1]
-            and landmark_pos[2] >= pos[3, 0]
-            and landmark_pos[2] < pos[3, 1]
+            landmark.pos[0] >= pos[1, 0]
+            and landmark.pos[0] < pos[1, 1]
+            and landmark.pos[1] >= pos[2, 0]
+            and landmark.pos[1] < pos[2, 1]
+            and landmark.pos[2] >= pos[3, 0]
+            and landmark.pos[2] < pos[3, 1]
         ):
             patch = (
                 torch.from_numpy(np.expand_dims(patch, axis=0))
@@ -212,9 +212,9 @@ def main():
             #     Each tuple is applied as the target for the corresponding example.
                 target = (
                     idx_output_channel,
-                    landmark_pos[0] - pos[1, 0],
-                    landmark_pos[1] - pos[2, 0],
-                    landmark_pos[2] - pos[3, 0],
+                    landmark.pos[0] - pos[1, 0],
+                    landmark.pos[1] - pos[2, 0],
+                    landmark.pos[2] - pos[3, 0],
                 )
                 logger.info(f"Relative target: {target}")
 

@@ -1,14 +1,14 @@
 import logging
 
-from graph.graph import CGraph
+from graph.graph import CGraph, CNode
 
 
 logger = logging.getLogger("app")
 
 
-def get_landmark_position(graph: CGraph, landmark_type: str=None, landmark_id: int|tuple=None) -> tuple[int]|None:
+def get_landmark_obj(graph: CGraph, landmark_type: str=None, landmark_id: int|tuple=None) -> tuple[int]|None:
     """
-    Get the position of the provided landmark depending on its type.
+    Get the landmark object depending on the provided informations.
 
     Args:
         graph           : The graph
@@ -23,30 +23,36 @@ def get_landmark_position(graph: CGraph, landmark_type: str=None, landmark_id: i
 
     if landmark_type == "node":
         landmark = graph.nodes[landmark_id]
-        landmark_pos = landmark.pos
 
         logger.info(landmark)
 
     elif landmark_type == "centerline":
         landmark = graph.connections[landmark_id]
-        landmark_pos = landmark.getMidPoint().pos
+        
+        # Save a few information about the centerline for logging
+        _centerline_id = landmark._id
+        _centerline_node1 = landmark.node1._id
+        _centerline_node2 = landmark.node2._id
+
+        landmark = landmark.getMidPoint()
 
         logger.info(
             "_{}_ |{}<->{}| - Skeleton voxel : {}".format(
-                landmark._id, landmark.node1._id, landmark.node2._id, landmark_pos
+                _centerline_id, _centerline_node1, _centerline_node2, landmark.pos
             )
         )
 
     elif landmark_type == "position":
-        landmark_pos = landmark_id
+        # In this case, the landmark id is its position ! 
+        landmark = CNode(-1, landmark_id, -1)
 
-        logger.info(f"Raw position: {landmark_pos}")
+        logger.info(f"Raw position: {landmark.pos}")
 
     else:
-        landmark_pos = None  # TODO : Manage the case where no position provided -> https://captum.ai/tutorials/Segmentation_Interpret
+        landmark = None  # TODO : Manage the case where no position provided -> https://captum.ai/tutorials/Segmentation_Interpret
         
         logger.info(
             "No logit provided. Computation of the gradients on the whole prediction..."
         )
 
-    return landmark_pos
+    return landmark
