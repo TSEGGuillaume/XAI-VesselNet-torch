@@ -2,6 +2,7 @@ import argparse
 import logging
 
 import os
+import json
 
 import numpy as np
 import torch
@@ -326,6 +327,32 @@ def analyse_prediction(
     return pred_nfo, y_pred, y_true
 
 
+def convert_typing_to_native(data):
+    if isinstance(data, dict):
+        return {k: convert_typing_to_native(v) for k, v in data.items()}
+
+    elif isinstance(data, tuple):
+        return convert_typing_to_native(list(data))
+
+    elif isinstance(data, torch.Tensor):
+        return convert_typing_to_native(data.item()) if len(data)==1 else convert_typing_to_native(data.cpu().numpy().tolist())
+
+    elif isinstance(data, np.ndarray):
+        return convert_typing_to_native(data.item()) if len(data)==1 else convert_typing_to_native(data.tolist())
+
+    elif isinstance(data, list):
+        return [convert_typing_to_native(elem) for elem in data]
+
+    elif isinstance(data, (np.int64, np.int32)):
+        return int(data)
+
+    elif isinstance(data, (np.float64, np.float32)):
+        return float(data)
+
+    else:
+        return data
+
+
 def main():
     # Select the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -485,6 +512,46 @@ def main():
         stats_blob["area_check"] = np.sum(labeled_blobs==blob_idx)
 
         blobs_props[blob_idx-1]["stats"] = stats_blob
+
+    # ------------------------ #
+    #     CREATE JSON FILE     #
+    # ------------------------ #
+    logger.info("Create JSON output file ...")
+    logger.info("___________________________")
+
+    # Define the basic structure of the file
+    res_output = {
+        "point"         : {},
+        "inference"     : {},
+        "attribution"   : {}
+    }
+
+    # Information about the landmark
+    res_output["point"] = {
+        "type": landmark_type,
+        "absolute_position": landmark.pos,
+        "relative_position": relative_landmark_pos,
+        "degree": landmark.degree,
+        "absolute_thickness": vessel_thickness_global,
+        "relative_thickness": vessel_thickness_patch,
+        "distance_from_center": dist_landmark_from_patch_center
+    }
+
+    # About the prediction
+    res_output["inference"] = { "patch_position": patch_pos } | pred_res
+    
+    # About the attribution map
+    res_output["attribution"] = attribution_stats
+    res_output["attribution"]["total_variation"] = attribution_tv
+    res_output["attribution"]["blobs"] = blobs_props
+
+    json_data = json.dumps(convert_typing_to_native(res_output), indent=3)
+    save_path = os.path.join(cfg.result_dir, "json", "res_" + os.path.basename(attribution_path).split(".")[0] + ".json")
+    
+    with open(save_path, "w") as json_file:
+        json_file.write(json_data)
+
+    logger.info(f"Finished. Result file saved at {save_path}")
 
 
 if __name__ == "__main__":
