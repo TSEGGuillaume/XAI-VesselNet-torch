@@ -9,7 +9,7 @@ from torch.nn import Module
 from torch import device 
 
 from monai.data.meta_tensor import MetaTensor
-from monai.transforms import LoadImage, Compose, SpatialCrop, SpatialPad, Activations, AsDiscrete, ToTensor
+from monai.transforms import LoadImage, Compose, SpatialCrop, SpatialPad, Activations, AsDiscrete, ToTensor, ToNumpy
 from monai.networks.utils import one_hot as OneHotEncoding
 from monai.data.utils import decollate_batch
 
@@ -22,6 +22,8 @@ from network.model_creator import init_inference_model
 from utils.prebuilt_logs import log_hardware
 from image.vessel_thickness import compute_vessel_thickness
 from utils.distances import distance
+from metrics.total_variation import image_total_variation
+from metrics.descriptive_statistics import univariate_analysis
 
 from infer import infer_patch
 from eval import evaluate
@@ -315,6 +317,26 @@ def main():
     relative_patch_center_pos = np.array(sw_shape) / 2
     dist_landmark_from_patch_center = distance(relative_landmark_pos, relative_patch_center_pos, norm="L2")
 
+    # ------------------------- #
+    #   ATTRIBUTIONS ANALYSIS   #
+    # ------------------------- #
+    logger.info("Attributions analysis ...")
+    logger.info("_________________________")
+
+    # Open the attribution map, without channel-dim, as a numpy array 
+    AttributionLoader = Compose([
+        LoadImage(image_only=False, ensure_channel_first=False),
+        ToNumpy()
+    ])
+    I_attribution, meta_attribution = AttributionLoader(attribution_path)
+
+    # Compute various data on attribution map
+    logger.info("Compute descriptive statistics...")
+    attribution_stats = univariate_analysis(I_attribution.flatten())
+    logger.info("Compute image's total variation...")
+    attribution_tv = image_total_variation(I_attribution, neighborhood="N26", norm="L1")
+
+    print(attribution_stats, attribution_tv)
 
 if __name__=="__main__":  
     import utils.configuration as appcfg
