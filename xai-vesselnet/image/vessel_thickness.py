@@ -12,7 +12,7 @@ def compute_vessel_thickness(data: ndarray, landmark_pos: tuple) -> float:
     TODO : thickness is given in px. A good thing would be to convert to mm using volume's affine
 
     Args:
-        data            : The image of the vessels.
+        data            : The image (H,W,[D]) of the vessels.
         landmark_pos    : The position of the observed landmark.
 
     Returns:
@@ -35,7 +35,7 @@ def distance_map(I: ndarray, method: str = "edt") -> ndarray:
         - "edt" : Exact Euclidean Distance Transform
 
     Parameters
-        I       : The image to transform
+        I       : The image (H,W,[D]) to transform
         method  : The key of the transformation to compute ; see implemented distance methods
 
     Returns
