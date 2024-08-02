@@ -159,7 +159,7 @@ def eval_patch_prediction(
         device : The device to store the model and data
 
     Returns:
-        The tuple ( metrics, y_pred, y_true).
+        The tuple (metrics, y_pred, y_true).
     """
     # Pre-processing
     start_roi, end_roi = patch_pos
@@ -218,7 +218,7 @@ def analyse_prediction(
     input_size: tuple,
     device: device,
     relative_landmark_pos: tuple,
-):
+) -> tuple[dict, MetaTensor, MetaTensor]:
     """
     Perform a prediction on a patch and evaluate the resulting segmentation. Analyse the output values on a specific landmark position and define its status.
 
@@ -232,7 +232,7 @@ def analyse_prediction(
         landmark_pos    : The position of the landmark to analyse
 
     Returns:
-        The tuple ( metrics, y_pred, y_true).
+        The tuple (metrics, y_pred, y_true).
     """
     metrics, y_pred, y_true = eval_patch_prediction(
         model, x, y, patch_pos, input_size, device
@@ -328,7 +328,16 @@ def analyse_prediction(
     return pred_nfo, y_pred, y_true
 
 
-def convert_typing_to_native(data):
+def convert_typing_to_native(data) -> dict:
+    """
+    Convert a dictionary containing high-level types into an identical dictionary containing only native types
+    
+    Args:
+        data : The dictionnary to process
+
+    Returns:
+        The native types dictionary
+    """
     if isinstance(data, dict):
         return {k: convert_typing_to_native(v) for k, v in data.items()}
 
