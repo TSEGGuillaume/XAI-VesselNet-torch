@@ -17,9 +17,8 @@ from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVess
 from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph
 from utils.load_hyperparameters import load_hyperparameters
 from utils.prebuilt_logs import log_hardware
+from utils.get_landmark_from_args import get_landmark_obj
 from network.model_creator import init_inference_model
-
-from graph.graph import CGraph
 
 
 def parse_arguments():
@@ -96,52 +95,6 @@ def parse_arguments():
     return args
 
 
-def get_landmark_position(graph: CGraph, landmark_type: str=None, landmark_id: int|tuple=None) -> tuple[int]|None:
-    """
-    Get the position of the provided landmark depending on its type.
-
-    Args:
-        graph           : The graph
-        landmark_type   : The type of the landmark. `None` by default 
-        landmark_id     : The ID of the landmark. `None` by default 
-
-    Returns:
-        The position of the landmark. `None` if no landmark_type and landmark_id provided
-    """
-    if landmark_type == None and landmark_id == None:
-        return None
-
-    if landmark_type == "node":
-        landmark = graph.nodes[landmark_id]
-        landmark_pos = landmark.pos
-
-        logger.info(landmark)
-
-    elif landmark_type == "centerline":
-        landmark = graph.connections[landmark_id]
-        landmark_pos = landmark.getMidPoint().pos
-
-        logger.info(
-            "_{}_ |{}<->{}| - Skeleton voxel : {}".format(
-                landmark._id, landmark.node1._id, landmark.node2._id, landmark_pos
-            )
-        )
-
-    elif landmark_type == "position":
-        landmark_pos = landmark_id
-
-        logger.info(f"Raw position: {landmark_pos}")
-
-    else:
-        landmark_pos = None  # TODO : Manage the case where no position provided -> https://captum.ai/tutorials/Segmentation_Interpret
-        
-        logger.info(
-            "No logit provided. Computation of the gradients on the whole prediction..."
-        )
-
-    return landmark_pos
-
-
 def main():
     # Select the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -149,7 +102,7 @@ def main():
 
     # Variables
     model_name      = args.model
-    weigths_path    = args.weights
+    weights_path    = args.weights
     x_path          = args.img_path
     graph_path      = args.graph_path
     hyperparameters_path  = args.hyperparameters
@@ -182,12 +135,12 @@ def main():
     vessel_graph = LoadVesselGraph(graph_path)
     vessel_graph = Anatomic2ImageGraph(vessel_graph, meta["original_affine"])
 
-    landmark_pos = get_landmark_position(graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id)
+    landmark = get_landmark_obj(graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id)
 
     # Load the trained model
     model = init_inference_model(
         model_name=model_name,
-        weigths_path=weigths_path,
+        weights_path=weights_path,
         in_channels=in_channels,
         out_channels=out_channels,
         device=device,
@@ -235,12 +188,12 @@ def main():
 
     for patch, pos in patches:
         if (
-            landmark_pos[0] >= pos[1, 0]
-            and landmark_pos[0] < pos[1, 1]
-            and landmark_pos[1] >= pos[2, 0]
-            and landmark_pos[1] < pos[2, 1]
-            and landmark_pos[2] >= pos[3, 0]
-            and landmark_pos[2] < pos[3, 1]
+            landmark.pos[0] >= pos[1, 0]
+            and landmark.pos[0] < pos[1, 1]
+            and landmark.pos[1] >= pos[2, 0]
+            and landmark.pos[1] < pos[2, 1]
+            and landmark.pos[2] >= pos[3, 0]
+            and landmark.pos[2] < pos[3, 1]
         ):
             patch = (
                 torch.from_numpy(np.expand_dims(patch, axis=0))
@@ -259,9 +212,9 @@ def main():
             #     Each tuple is applied as the target for the corresponding example.
                 target = (
                     idx_output_channel,
-                    landmark_pos[0] - pos[1, 0],
-                    landmark_pos[1] - pos[2, 0],
-                    landmark_pos[2] - pos[3, 0],
+                    landmark.pos[0] - pos[1, 0],
+                    landmark.pos[1] - pos[2, 0],
+                    landmark.pos[2] - pos[3, 0],
                 )
                 logger.info(f"Relative target: {target}")
 
@@ -283,8 +236,8 @@ def main():
                     )
 
                     # Saving the attribution of the patch
-                    output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weigths_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
-                    basic_postfix = f"{os.path.splitext(os.path.basename(weigths_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
+                    output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
+                    basic_postfix = f"{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
 
                     # Attribution channels are saved separately
                     for idx_input_channel in range(in_channels):

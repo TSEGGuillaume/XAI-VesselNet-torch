@@ -6,7 +6,7 @@ from models import instanciate_model
 
 def init_inference_model(
     model_name: str,
-    weigths_path: str,
+    weights_path: str,
     in_channels: int,
     out_channels: int,
     device: torch.device,
@@ -16,7 +16,7 @@ def init_inference_model(
 
     Args:
         model_name      : The name of the model
-        weigths_path    : The patch to the trained weights
+        weights_path    : The patch to the trained weights
         in_channels     : The number of input channels
         device          : The device to store the model
 
@@ -27,7 +27,7 @@ def init_inference_model(
     model = instanciate_model.instanciate_model(
         model_name, in_channels=in_channels, out_channels=out_channels
     ).to(device)
-    model.load_state_dict(torch.load(weigths_path)["model_state_dict"])
+    model.load_state_dict(torch.load(weights_path)["model_state_dict"])
     model.eval()
 
     return model

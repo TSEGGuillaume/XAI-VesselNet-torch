@@ -1,8 +1,7 @@
 import math
 import numpy as np
 
-
-def distance(p1: tuple, p2: tuple, norm: str = "L2"):
+def distance(p1: tuple | list, p2: tuple | list, norm: str = "L2"):
     """
     Compute the distance between two n-D points.
     Implemented distance methods:

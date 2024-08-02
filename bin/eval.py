@@ -212,7 +212,7 @@ def main():
 
     # Define variables from user args
     model_name      = args.model
-    weigths_path    = args.weights
+    weights_path    = args.weights
     dataset_path    = args.data
 
     masks_path      = args.mask
@@ -226,7 +226,7 @@ def main():
     # Load the trained model
     model = init_inference_model(
         model_name=model_name,
-        weigths_path=weigths_path,
+        weights_path=weights_path,
         in_channels=in_channels,
         out_channels=out_channels,
         device=device,
@@ -264,7 +264,7 @@ def main():
     # Post-transform
     transforms = Compose(
         [
-            Activations(sigmoid=True),
+            Activations(sigmoid=True) if out_channels == 1 else Activations(softmax=True),
             AsDiscrete(threshold=0.5),
             # RemoveSmallObjects(),
             save_seg,
@@ -285,11 +285,22 @@ def main():
     # 2/ Encode to One-Hot
     _mem_ys_pred = ys_pred
     ys_pred = []
-    for batch_pred in _mem_ys_pred:
-        ys_pred += [
-            OneHotEncoding(torch.unsqueeze(tensor, axis=0), num_classes=2, dim=1)
-            for tensor in decollate_batch(batch_pred)
-        ]
+
+    if out_channels > 1: 
+        # We assume ys_pred elements are in one-hot format
+        for batch_pred in _mem_ys_pred:
+            ys_pred += [
+                torch.unsqueeze(tensor, axis=0) for tensor in decollate_batch(batch_pred)
+            ]
+    elif out_channels == 1 :
+        # We assume ys_pred elements are in single-channel class indices
+        for batch_pred in _mem_ys_pred:
+            ys_pred += [
+                OneHotEncoding(torch.unsqueeze(tensor, axis=0), num_classes=2, dim=1)
+                for tensor in decollate_batch(batch_pred)
+            ]
+    else:  
+        raise RuntimeError("Tensors must have a channel dimension.")
 
     # Prepare the ground-truth data
     # 1/ Get the ground-truth in the right sample order given the loader
