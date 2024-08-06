@@ -91,7 +91,7 @@ def apply_filter_on_df(df: pd.DataFrame, filter: dict) -> pd.DataFrame:
 
 def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_path: str, user_save_dir: str):
 
-    save_dir = user_save_dir
+    save_dir_root = user_save_dir
 
     I_y_pred, meta  = LoadImage(ensure_channel_first=True, image_only=False)(y_pred_path)
     I_y_true        = LoadImage(ensure_channel_first=True, image_only=True)(y_true_path)
@@ -121,7 +121,7 @@ def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_pa
 
     print("Binary prediction :", I_y_pred.shape, "| Skeleton :", I_y_true_skel.shape )
 
-    SaveImage(output_dir=f"{save_dir}/skel", output_ext=".nii.gz", output_postfix=f"edt", resample=False, separate_folder=False,)( np.expand_dims(I_y_true_skel, axis=0), meta )
+    SaveImage(output_dir=f"{save_dir_root}/skel", output_ext=".nii.gz", output_postfix=f"edt", resample=False, separate_folder=False,)( np.expand_dims(I_y_true_skel, axis=0), meta )
 
     # Graph
     graph = LoadVesselGraph(graph_path)
@@ -213,7 +213,7 @@ def main(y_pred_path: str, y_true_path: str, graph_path: str, hyperparameters_pa
 
         # Save
         save_dir = os.path.join(
-            save_dir,
+            save_dir_root,
             "_".join(f"{_filter_val}" for _filter_val in filter.values())
         )
         if not os.path.exists(save_dir):
