@@ -6,7 +6,7 @@ import torch
 from torch.nn import Module
 
 from monai.data.meta_tensor import MetaTensor
-from monai.inferers import Inferer, SimpleInferer
+from monai.inferers import Inferer, SimpleInferer, SlidingWindowInferer
 
 from monai.data import DataLoader, ArrayDataset
 from monai.transforms import (
@@ -20,7 +20,6 @@ from monai.transforms import (
 )
 from monai.transforms import SaveImage
 
-from monai.inferers import SlidingWindowInferer
 from monai.data.utils import decollate_batch, first
 
 from models import instanciate_model
@@ -82,14 +81,14 @@ def infer_patch(
     patch_pos: list,
     input_size: tuple,
     postprocessing: Transform = None,
-):
+) -> list[MetaTensor]:
     """
     Create a patch from a provided spatial position and infer this patch.
     The position of the patch must be a tuple list in the following format [ (start, ), (end, ) ].
     The input size (patch size) is used to pad the patch if the end position of the roi exceed the image size.
     To save the result of the inferences, compose the post-processing with a `SaveImage` object.
 
-    Args
+    Args:
         model           : The trained model
         data            : The image data
         device          : The device to store the model
@@ -97,7 +96,7 @@ def infer_patch(
         input_size      : The input size (patch size)
         postprocessing  : the post transforms to apply
 
-    Returns
+    Returns:
         predictions (list[MetaTensor]) : The list of infered patch.
     """
 
@@ -214,7 +213,7 @@ def main():
 
     # Define variables from user args
     model_name = args.model
-    weigths_path = args.weights
+    weights_path = args.weights
     dataset_path = args.data
 
     # Load hyperparameters for training
@@ -226,7 +225,7 @@ def main():
     # Load the trained model
     model = init_inference_model(
         model_name=model_name,
-        weigths_path=weigths_path,
+        weights_path=weights_path,
         in_channels=in_channels,
         out_channels=out_channels,
         device=device,
