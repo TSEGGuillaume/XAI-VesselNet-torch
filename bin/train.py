@@ -1,13 +1,18 @@
 import argparse
 import logging
+
 from datetime import datetime
 import time
 import os
 
 import numpy as np
 import random
+from math import ceil
 
 import torch
+from torch.nn import Module
+from torch.utils.data import DataLoader
+from torch import device
 from torch.utils.tensorboard import SummaryWriter
 from monai.transforms import (
     Compose,
@@ -17,10 +22,15 @@ from monai.transforms import (
 from monai.metrics import DiceMetric
 from monai.losses import DiceFocalLoss
 from monai.inferers import sliding_window_inference
-from monai.data.utils import decollate_batch, first
+from monai.data.utils import decollate_batch
+from monai.networks.utils import one_hot as OneHotEncoding
 from monai.visualize.img2tensorboard import plot_2d_or_3d_image
 
+from utils.configuration import Configuration
+from utils.prebuilt_logs import log_hardware
+from utils.load_hyperparameters import load_hyperparameters
 from models import instanciate_model
+from datasets.instanciate_dataset import create_training_loaders
 
 
 def parse_arguments():
@@ -52,7 +62,9 @@ def parse_arguments():
         "-p",
         type=str,
         metavar=("HYPERPARAMETERS_JSON_PATH"),
-        default=None,
+        default=os.path.join(
+            cfg.workspace, "resources", "default_hyperparameters.json"
+        ),
         help="Path to the hyperparameters JSON",
     )
 
@@ -60,40 +72,46 @@ def parse_arguments():
     return args
 
 
-def load_training_hyperparameters(json_path: str):
-    import json
+def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperparameters: dict, device:device="cpu") -> None:
+    """
+    Fit the model
 
-    if json_path is None:
-        json_path = os.path.join(cfg.workspace, "resources", "default_hyperparameters.json")
-    
-    with open(json_path, "r") as f:
-        training_cfg = json.load(f)
-        logger.debug(
-            "Loading hyperparameters from {} \n {}".format(json_path, training_cfg)
-        )
-        return training_cfg
+    Args:
+        model           : The model
+        train_loader    : The dataloader for training
+        val_loader      : The dataloader for validation
+        hyperparameters : The dictionary of hyperparameters
+        device          : The device. Default to "cpu"
 
+    Returns:
+        None
+    """
+    # Training hyperparameters
+    start_lr    = hyperparameters["lr"]
+    max_epoch   = hyperparameters["epoch"]
 
-def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
-    # Hyperparameters
-    start_lr = hyperparameters["lr"]
-    loss_function = DiceFocalLoss(
-        include_background=False,
-        sigmoid=True
-    )  # TODO: Move to a cfg file and make a factory
+    include_background = False
+
     optimizer = torch.optim.Adam(
-        model.parameters(),
-        start_lr
+        model.parameters(), start_lr
     )  # TODO: Move to a cfg file and make a factory
 
-    # Validation settings
-    val_metric = DiceMetric(include_background=False, reduction="mean")
-    post_transforms = Compose([
-        Activations(sigmoid=True),
-        AsDiscrete(threshold=0.5)
-    ])
+    loss_function = DiceFocalLoss(
+        include_background=include_background, softmax=True, to_onehot_y=True, reduction="mean"
+    )  # TODO: Move to a cfg file and make a factory
 
-    # Summary writer to track training
+    # Validation hyperparameters
+    val_interval = 1
+
+    sw_batch_size = hyperparameters["batch_size"] # How many sliding windows processed at the same time
+    sw_patch_size = hyperparameters["patch_size"]
+    
+    val_metric = DiceMetric(include_background=include_background, reduction="mean")
+
+    # Define the post-processing (apply to compute val_metric)
+    post_transforms = Compose([Activations(softmax=True), AsDiscrete(threshold=0.5)])
+
+    # Instanciate SummaryWriter to track the training process
     writer = SummaryWriter(
         log_dir="logs/runs/{}__{}__LR_{:.2e}__BATCH_{}__{}".format(
             timestamp,
@@ -105,36 +123,27 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
     )
 
     # Start a typical PyTorch training
-    epoch_loss_values = []
-
-    val_interval = 1
-    best_metric = -1
-    best_metric_epoch = -1
-    metric_values = []
+    best_metric_value       = -1
+    best_metric_idx_epoch   = -1
 
     """
     Approximation, len(dataloader) does not work because we are working on an IterableDataset.
     Manual says that for IterableDataset, len(dataloader) return an approximation of len(dataset) / batch_size, with proper rounding but error here.
-    """ 
-    epoch_len = round(
-        len(list(train_loader.dataset)) / train_loader.batch_size
-    )  
+    """
+    epoch_len = ceil(len(list(train_loader.dataset)) / train_loader.batch_size)
 
-    loss = 0.0
-
-    for epoch in range(hyperparameters["epoch"]):
+    for idx_epoch in range(1, max_epoch + 1):
         model.train()
 
-        logger.info("{}".format("-" * 10))
-        logger.info("Epoch {}/{}".format(epoch + 1, hyperparameters["epoch"]))
+        logger.info("\n{}\nEpoch {}/{}".format("-" * 10, idx_epoch, max_epoch))
 
-        epoch_loss = 0
-        step = 0
+        steps_count     = 0
+        epoch_avg_loss  = 0
 
-        stime = time.time()
+        stime = time.time() # Start a timer
 
         for batch_data in train_loader:
-            step += 1
+            steps_count += 1
 
             optimizer.zero_grad()
 
@@ -145,156 +154,151 @@ def fit(model, train_loader, val_loader, hyperparameters:dict, device="cpu"):
             loss.backward()
             optimizer.step()
 
-            epoch_loss += loss.item()
+            epoch_avg_loss += loss.item()
 
-            logger.debug(f"[{step}/~{epoch_len}] Train loss : {loss.item():.4f}")
+            logger.debug(f"[{steps_count}/~{epoch_len}] Train loss : {loss.item():.4f}")
 
-        etime = time.time()
+        etime = time.time() # Stop the timer
 
-        epoch_loss /= step
-        epoch_loss_values.append(epoch_loss)
+        epoch_avg_loss /= steps_count # Average epoch loss
 
         writer.add_scalar(
-            "train_mean_loss", epoch_loss, epoch + 1
+            f"train_{loss_function.reduction}_loss", epoch_avg_loss, idx_epoch
         )  # Prefered to a log per step
 
         logger.info(
-            f"Epoch {epoch + 1} ({etime - stime} s) | average loss: {epoch_loss:.4f}"
+            f"Epoch {idx_epoch} ({etime - stime} s) | average loss: {epoch_avg_loss:.4f}"
         )
         logger.debug("Optimizer: {}".format(optimizer.state_dict()["param_groups"]))
 
-        # Validation
-        if (epoch + 1) % val_interval == 0:
+        # If validation requiered
+        if (idx_epoch) % val_interval == 0:
             model.eval()
 
             with torch.no_grad():
-                val_images = None
-                val_labels = None
-                val_outputs = None
+            
+                stime = time.time() # Start a timer
 
-                sw_batch_size = hyperparameters["batch_size"]
+                val_count       = 0
+                val_avg_loss    = 0
 
-                stime = time.time()
-
-                n_val = 0
-                global_val_loss = 0
                 for val_data in val_loader:
-                    val_images = val_data["img"].to(device)
-                    val_labels = val_data["seg"].to(device)
+                    val_count += 1
+
+                    val_inputs, val_labels = val_data["img"].to(device), val_data["seg"].to(device)
 
                     val_outputs = sliding_window_inference(
-                        val_images, hyperparameters["patch_size"], sw_batch_size, model
+                        val_inputs, sw_patch_size, sw_batch_size, model
                     )
-                    val_outputs = [
-                        post_transforms(i) for i in decollate_batch(val_outputs)
-                    ]
 
-                    # Compute loss and metric for current iteration
-                    val_metric(y_pred=val_outputs, y=val_labels)
+                    val_loss = loss_function(val_outputs, val_labels) # Compute the validation loss for current iteration
+                    logger.debug(f"Current val loss : {val_loss.item()}")
 
-                    for val_output in val_outputs:
-                        loss = loss_function(
-                            torch.unsqueeze(val_output, axis=0), val_labels
-                        )
-                        logger.debug(f"Current val loss : {loss.item()}")
-                        global_val_loss += loss.item()
-                        n_val += 1
+                    val_avg_loss += val_loss.item()
 
-                global_val_loss /= n_val
+                    val_outputs = torch.stack(
+                        [post_transforms(i) for i in decollate_batch(val_outputs)]
+                    )  # Decolate to post-process and re-stack
 
-                etime = time.time()
+                    val_labels_ohe = OneHotEncoding(labels=val_labels, num_classes=val_outputs.shape[1])
 
-                metric = val_metric.aggregate().item() # Aggregate the final mean dice result
-                val_metric.reset()  # Reset the status for next validation round
-                metric_values.append(metric)
+                    val_metric(y_pred=val_outputs, y=val_labels_ohe) # Compute the metrics for current validation
 
-                if metric > best_metric:
-                    best_metric = metric
-                    best_metric_epoch = epoch + 1
+                val_avg_loss /= val_count
+
+                etime = time.time() # Stop the timer
+
+                reduced_metric = val_metric.aggregate().item() # Execute reduction and aggregation logic
+                val_metric.reset() # Reset the metric for next validation round
+
+                if reduced_metric > best_metric_value:
+                    best_metric_value = reduced_metric
+                    best_metric_idx_epoch = idx_epoch
+
+                    model_save_path = os.path.join(cfg.result_dir, "weights", f"model_{timestamp}.pth")
                     torch.save(
                         {
-                            'model_state_dict': model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict()
+                            "model_state_dict": model.state_dict(),
+                            "optimizer_state_dict": optimizer.state_dict(),
                         },
-                        os.path.join(cfg.result_dir, "weights", f"model_{timestamp}.pth")
-                    )
-                    logger.debug("Saved new best performing model")
+                        model_save_path
+                    ) # Save the model
+                    logger.debug(f"New best performing model, saved at {model_save_path}")
 
                 logger.info(
-                    "Validation step for current epoch: {} ({} s) | Validation loss: {:.4f} | Current mean dice: {:.4f} | Best mean dice: {:.4f} at epoch {}".format(
-                        epoch + 1,
+                    "Validation step for current epoch: {} ({} s) | Validation loss: {:.4f} | Current {} dice: {:.4f} | Best {} dice: {:.4f} at epoch {}".format(
+                        idx_epoch,
                         etime - stime,
-                        global_val_loss,
-                        metric,
-                        best_metric,
-                        best_metric_epoch,
+                        val_avg_loss,
+                        val_metric.reduction,
+                        reduced_metric,
+                        val_metric.reduction,
+                        best_metric_value,
+                        best_metric_idx_epoch,
                     )
                 )
-                writer.add_scalar("val_mean_dice", metric, epoch + 1)
-                writer.add_scalar("val_mean_loss", global_val_loss, epoch + 1)
+                writer.add_scalar(f"val_{val_metric.reduction}_dice", reduced_metric, idx_epoch)
+                writer.add_scalar(f"val_{loss_function.reduction}_loss", val_avg_loss, idx_epoch)
 
                 # Plot the last model output as GIF image in TensorBoard with the corresponding image and label
-                #plot_2d_or_3d_image(val_images, epoch + 1, writer, index=0, tag="image")
-                plot_2d_or_3d_image(val_labels, epoch + 1, writer, index=0, tag="label")
+                plot_2d_or_3d_image(val_labels, idx_epoch, writer, index=0, tag="label")
+
                 plot_2d_or_3d_image(
-                    val_outputs, epoch + 1, writer, index=0, tag="output"
+                    val_outputs, idx_epoch, writer, index=0, max_channels=val_outputs.shape[1], tag="output_"
                 )
 
     logger.info(
-        f"Train completed. Best metric: {best_metric:.4f} at epoch: {best_metric_epoch}"
+        f"Training completed. Best metric: {best_metric_value:.4f} at epoch: {best_metric_idx_epoch}"
     )
     writer.close()
 
 
 def main():
-    from datasets.instanciate_dataset import create_training_loaders
-    from utils.logging_blocks import log_hardware
-
-    # Training parameters
-    hyperparameters = load_training_hyperparameters(args.hyperparameters)
-
-    # Dataset loaders
-    train_loader, val_loader = create_training_loaders(
-        args.csv_train,
-        args.csv_val,
-        hyperparameters["patch_size"],
-        hyperparameters["batch_size"]
-    )
-
-    # Device
+    # Select the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log_hardware(device)
 
-    # Model
-    in_channels = first(train_loader)["img"].shape[1] # We assume the same input channels through the whole datasets ; N, C, H, W, [D]
-    logger.debug(f"Input channels : {in_channels}")
+    # Load hyperparameters for training
+    hyperparameters = load_hyperparameters(args.hyperparameters)
 
+    # Define variables
+    batch_size      = hyperparameters["batch_size"]
+    input_shape     = hyperparameters["patch_size"]
+    spatial_dims    = len(input_shape)
+    in_channels     = hyperparameters["in_channels"]
+    out_channels    = hyperparameters["out_channels"]
+    logger.debug(f"Input channels : {in_channels} | Output channels : {out_channels}")
+
+    train_dataset_path  = args.csv_train
+    val_dataset_path    = args.csv_val
+
+    model_type = args.model
+
+    # Create loaders from provided csv
+    train_loader, val_loader = create_training_loaders(
+        train_dataset_path,
+        val_dataset_path,
+        input_shape,
+        batch_size,
+    )
+
+    # Create the model
     model = instanciate_model.instanciate_model(
-        args.model,
-        spatial_dims=3,
-        in_channels=in_channels,
-        out_channels=1
+        model_type, spatial_dims=spatial_dims, in_channels=in_channels, out_channels=out_channels
     ).to(device)
 
-    fit(
-        model,
-        train_loader,
-        val_loader,
-        hyperparameters=hyperparameters,
-        device=device
-    )
+    # Call the training loop
+    fit(model, train_loader, val_loader, hyperparameters, device=device)
 
 
 if __name__ == "__main__":
-    from utils.configuration import Configuration
-
     cfg = Configuration(p_filename="./resources/default.ini")
 
     args = parse_arguments()
 
+    # Logger
     timestamp = datetime.today().strftime("%Y%m%d-%H%M%S")
 
-    # Logger
     logging.config.fileConfig(
         os.path.join(cfg.workspace, "resources", "logger.conf"),
         defaults={
