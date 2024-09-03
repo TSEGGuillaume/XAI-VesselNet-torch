@@ -3,13 +3,16 @@ import os
 
 from monai.data import DataLoader, PatchIterd
 from monai.transforms import Compose, RandRotate90d, RandFlipd, RandGaussianSmoothd
+from monai.transforms import Compose, RandRotate90, RandFlip, RandGaussianSmooth, DivisiblePad
 from monai.data.utils import first
 
 from utils.dataset_reader import parse_dataset_csv
 from datasets.ImageDataset import ImageDatasetd, BalancedGridPatchDataset
 
+import numpy as np
 
-def instanciate_image_dataset(data_path: str, image_only: bool = True) -> ImageDatasetd:
+
+def instanciate_image_dataset(data_path: str, image_only: bool = True, transform=None) -> ImageDatasetd:
     """
     Create an image dataset from a file.
 
@@ -33,6 +36,8 @@ def instanciate_image_dataset(data_path: str, image_only: bool = True) -> ImageD
     ds = ImageDatasetd(
         image_files=image,
         seg_files=mask,
+        transform=transform,
+        seg_transform=transform,
         ensure_channel_first=True,
         image_only=image_only,
     )
@@ -69,31 +74,46 @@ def create_training_loaders(
     1. Externalize the transforms (either in a cfg file or in parameters at least)
 
     """
-    train_ds = instanciate_image_dataset(csv_train_path)
-    val_ds = instanciate_image_dataset(csv_val_path)
 
-    train_T = Compose(
-        [
-            RandRotate90d(keys=(["img", "seg"])),
-            RandFlipd(keys=(["img", "seg"])),
-            RandGaussianSmoothd(keys=(["img", "seg"])),
-        ]
-    )
+    if np.unique(input_size) != -1:
+        train_ds = instanciate_image_dataset(csv_train_path)
+        val_ds = instanciate_image_dataset(csv_val_path)
 
-    patch_iterator = PatchIterd(
-        ["img", "seg"], patch_size=input_size, start_pos=(0, 0, 0)
-    )
+        train_T = Compose(
+            [
+                RandRotate90d(keys=(["img", "seg"])),
+                RandFlipd(keys=(["img", "seg"])),
+                RandGaussianSmoothd(keys=(["img", "seg"])),
+            ]
+        )
 
-    train_patch_ds = BalancedGridPatchDataset(
-        train_ds,
-        patch_iterator,
-        with_coordinates=False,
-        transform=train_T,
-        foreground_ratio=0.85,
-    )
+        patch_iterator = PatchIterd(
+            ["img", "seg"], patch_size=input_size, start_pos=(0, 0, 0)
+        )
+
+        train_ds = BalancedGridPatchDataset(
+            train_ds,
+            patch_iterator,
+            with_coordinates=False,
+            transform=train_T,
+            foreground_ratio=0.85,
+        )
+
+    else:
+        train_T = Compose(
+            [
+                RandRotate90(),
+                RandFlip(),
+                RandGaussianSmooth(),
+                DivisiblePad(k=8, method="symmetric", mode="constant")
+            ]
+        )
+
+        train_ds = instanciate_image_dataset(csv_train_path, transform=train_T)
+        val_ds = instanciate_image_dataset(csv_val_path, transform=train_T)
 
     # Loaders
-    train_loader = DataLoader(train_patch_ds, batch_size=batch_size, num_workers=0)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=1, num_workers=0)
 
     return train_loader, val_loader
