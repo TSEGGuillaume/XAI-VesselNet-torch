@@ -245,7 +245,7 @@ def main():
 
     # Prepare the inferer
     sw_batch_size   = hyperparameters["batch_size"]
-    sw_shape        = hyperparameters["patch_size"]
+    sw_shape        = hyperparameters["input_shape"]
     sw_overlap      = hyperparameters["patch_overlap"]
 
     inferer = SlidingWindowInferer(
