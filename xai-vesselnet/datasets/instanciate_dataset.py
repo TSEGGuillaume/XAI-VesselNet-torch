@@ -3,7 +3,7 @@ import os
 
 from monai.data import DataLoader, PatchIterd
 from monai.transforms import Compose, RandRotate90d, RandFlipd, RandGaussianSmoothd
-from monai.transforms import Compose, RandRotate90, RandFlip, RandGaussianSmooth, DivisiblePad
+from monai.transforms import Compose, RandRotate90, RandFlip, RandGaussianSmooth, DivisiblePad, SpatialPad
 from monai.data.utils import first
 
 from utils.dataset_reader import parse_dataset_csv
@@ -64,7 +64,7 @@ def create_training_loaders(
         csv_train_path: path to CSV file containing training data paths.
         csv_val_path: path to CSV file containing validation data paths.
         input_size: size of the patches
-        is_patch: indicates whether or not to split the data into patches
+        is_patch: indicates whether or not to slice the data into patches
         batch_size: batch size. Defaults to 16.
 
     Notes:
@@ -101,14 +101,26 @@ def create_training_loaders(
         )
 
     else:
-        train_T = Compose(
-            [
-                RandRotate90(),
-                RandFlip(),
-                RandGaussianSmooth(),
-                DivisiblePad(k=8, method="symmetric", mode="constant")
-            ]
-        )
+        if batch_size == 1:
+            train_T = Compose(
+                [
+                    RandRotate90(),
+                    RandFlip(),
+                    RandGaussianSmooth(),
+                    DivisiblePad(k=8, method="symmetric", mode="constant"),
+                ]
+            )
+        elif batch_size > 1:
+            # Data agumentation causes a crash. I'm guessing this is due to the fact that the transformations modify the shape of the images, so that the input_size is no longer appropriate.
+            # TODO: dig into this issue
+            train_T = Compose(
+                [
+                    # RandRotate90(),
+                    # RandFlip(),
+                    # RandGaussianSmooth(),
+                    SpatialPad(spatial_size=input_size),
+                ]
+            )
 
         train_ds = instanciate_image_dataset(csv_train_path, transform=train_T)
         val_ds = instanciate_image_dataset(csv_val_path, transform=train_T)
