@@ -397,7 +397,7 @@ def main():
 
     in_channels = hyperparameters["in_channels"]
     out_channels = hyperparameters["out_channels"]
-    sw_shape = hyperparameters["patch_size"]
+    sw_shape = hyperparameters["input_shape"]
 
     # Load the image and its associated ground-truth
     I_x, meta = LoadImage(image_only=False, ensure_channel_first=True)(

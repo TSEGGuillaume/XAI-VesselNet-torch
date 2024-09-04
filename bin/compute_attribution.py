@@ -125,8 +125,8 @@ def main():
     in_channels     = hyperparameters["in_channels"]
     out_channels    = hyperparameters["out_channels"]
 
-    sw_shape    = [in_channels] + hyperparameters["patch_size"] # All dimensions should be specified
-    sw_overlap  = [0] + [hyperparameters["patch_overlap"]] * len(hyperparameters["patch_size"])
+    sw_shape    = [in_channels] + hyperparameters["input_shape"] # All dimensions should be specified
+    sw_overlap  = [0] + [hyperparameters["patch_overlap"]] * len(hyperparameters["input_shape"])
 
     # Image
     I, meta = LoadImage(image_only=False, ensure_channel_first=True)(x_path)
