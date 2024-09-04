@@ -51,7 +51,7 @@ def instanciate_image_dataset(data_path: str, image_only: bool = True, transform
 
 
 def create_training_loaders(
-    csv_train_path: str, csv_val_path: str, input_size: tuple, batch_size=16
+    csv_train_path: str, csv_val_path: str, input_size: tuple, is_patch: bool, batch_size=16
 ) -> tuple[DataLoader]:
     """
     Instantiate patch loaders used in the training pipeline (train, validation) from CSV files.
@@ -64,6 +64,7 @@ def create_training_loaders(
         csv_train_path: path to CSV file containing training data paths.
         csv_val_path: path to CSV file containing validation data paths.
         input_size: size of the patches
+        is_patch: indicates whether or not to split the data into patches
         batch_size: batch size. Defaults to 16.
 
     Notes:
@@ -75,7 +76,7 @@ def create_training_loaders(
 
     """
 
-    if np.unique(input_size) != -1:
+    if is_patch:
         train_ds = instanciate_image_dataset(csv_train_path)
         val_ds = instanciate_image_dataset(csv_val_path)
 
