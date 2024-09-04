@@ -116,7 +116,7 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
 
     sw_batch_size = hyperparameters["batch_size"] # How many sliding windows processed at the same time
     is_patch      = hyperparameters["patch"]
-    sw_patch_size = hyperparameters["patch_size"]
+    sw_patch_size = hyperparameters["input_shape"]
     
     val_metric = DiceMetric(include_background=include_background, reduction="mean")
 
@@ -285,7 +285,7 @@ def main():
 
     # Define variables
     batch_size      = hyperparameters["batch_size"]
-    input_shape     = hyperparameters["patch_size"]
+    input_shape     = hyperparameters["input_shape"]
     spatial_dims    = len(input_shape)
     is_patch        = hyperparameters["patch"]
     in_channels     = hyperparameters["in_channels"]
