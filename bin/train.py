@@ -90,6 +90,17 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
     start_lr    = hyperparameters["lr"]
     max_epoch   = hyperparameters["epoch"]
 
+    out_channels = hyperparameters["out_channels"]
+
+    if out_channels == 1:
+        to_onehot_y = False
+        kwargs = { "sigmoid": True, }
+    elif out_channels > 1:
+        to_onehot_y = True
+        kwargs = { "softmax": True, }
+    else:
+        raise ValueError(f"Expected out channels >= 1, got {out_channels}")
+    
     include_background = False
 
     optimizer = torch.optim.Adam(
@@ -97,7 +108,7 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
     )  # TODO: Move to a cfg file and make a factory
 
     loss_function = DiceFocalLoss(
-        include_background=include_background, softmax=True, to_onehot_y=True, reduction="mean"
+        include_background=include_background, to_onehot_y=to_onehot_y, reduction="mean", **kwargs,
     )  # TODO: Move to a cfg file and make a factory
 
     # Validation hyperparameters
@@ -109,7 +120,7 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
     val_metric = DiceMetric(include_background=include_background, reduction="mean")
 
     # Define the post-processing (apply to compute val_metric)
-    post_transforms = Compose([Activations(softmax=True), AsDiscrete(threshold=0.5)])
+    post_transforms = Compose([Activations(**kwargs), AsDiscrete(threshold=0.5)])
 
     # Instanciate SummaryWriter to track the training process
     writer = SummaryWriter(
@@ -200,9 +211,14 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
                         [post_transforms(i) for i in decollate_batch(val_outputs)]
                     )  # Decolate to post-process and re-stack
 
-                    val_labels_ohe = OneHotEncoding(labels=val_labels, num_classes=val_outputs.shape[1])
+                    # Always encode to One Hot format for metrics
+                    if val_outputs.shape[1] == 1:
+                        val_labels  = OneHotEncoding(labels=val_labels, num_classes=2)
+                        val_outputs = OneHotEncoding(labels=val_outputs, num_classes=2)
+                    elif val_outputs.shape[1] >= 1:
+                        val_labels  = OneHotEncoding(labels=val_labels, num_classes=val_outputs.shape[1])
 
-                    val_metric(y_pred=val_outputs, y=val_labels_ohe) # Compute the metrics for current validation
+                    val_metric(y_pred=val_outputs, y=val_labels) # Compute the metrics for current validation
 
                 val_avg_loss /= val_count
 
@@ -241,7 +257,9 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
                 writer.add_scalar(f"val_{loss_function.reduction}_loss", val_avg_loss, idx_epoch)
 
                 # Plot the last model output as GIF image in TensorBoard with the corresponding image and label
-                plot_2d_or_3d_image(val_labels, idx_epoch, writer, index=0, tag="label")
+                plot_2d_or_3d_image(
+                    val_labels, idx_epoch, writer, index=0, max_channels=val_outputs.shape[1], tag="label_"
+                )
 
                 plot_2d_or_3d_image(
                     val_outputs, idx_epoch, writer, index=0, max_channels=val_outputs.shape[1], tag="output_"

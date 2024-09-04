@@ -261,7 +261,7 @@ def main():
 
     transforms = Compose(
         [
-            Activations(sigmoid=True),
+            Activations(sigmoid=True) if out_channels == 1 else Activations(softmax=True),
             AsDiscrete(threshold=0.5),
             RemoveSmallObjects(),
             save_seg,
