@@ -3,6 +3,7 @@
     "batch_size": 16,
     "in_channels": 1,
     "out_channels": 2,
+    "patch": true,
     "patch_size": [64, 64, 64],
     "patch_overlap": 0.25,
     "lr": 0.0001
