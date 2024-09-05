@@ -39,7 +39,7 @@ from utils.distances import distance
 from metrics.total_variation import image_total_variation
 from metrics.descriptive_statistics import univariate_analysis
 
-from infer import infer_patch
+from infer import infer_single_data
 from eval import evaluate
 
 
@@ -139,195 +139,6 @@ def parse_arguments():
     return args
 
 
-def eval_patch_prediction(
-    model: Module,
-    x: MetaTensor,
-    y: MetaTensor,
-    patch_pos: tuple,
-    input_size: tuple,
-    device: device,
-) -> tuple[dict, MetaTensor, MetaTensor]:
-    """
-    Extract a patch from the whole data, predict the patch and evaluate the resulting segmentation.
-
-    Args:
-        model : The trained model
-        x : The data MetaTensors (N,C,H,W,[D])
-        y : The ground-truth MetaTensors (N,C,H,W,[D])
-        patch_pos : The ROI of the patch [ (start, ), (end, ) ]
-        input_size : The regular patch size. This is used for padding if cropping results in a smaller size.
-        device : The device to store the model and data
-
-    Returns:
-        The tuple (metrics, y_pred, y_true).
-    """
-    # Pre-processing
-    start_roi, end_roi = patch_pos
-
-    y_pred = infer_patch(
-        model=model,
-        data=x,
-        device=device,
-        patch_pos=patch_pos,
-        input_size=input_size,
-        postprocessing=None,
-    )
-    y_pred = y_pred[0]  # We already know there is only one image
-
-    output_channels = y_pred.shape[1]  # No more batch dimension
-
-    pred_postprocess_T = Compose(
-        [
-            # include saver here
-            (
-                Activations(sigmoid=True)
-                if output_channels == 1
-                else Activations(softmax=True)
-            ),
-            AsDiscrete(threshold=0.5),
-        ]
-    )
-    y_pred_postprocess = torch.stack(
-        [pred_postprocess_T(i) for i in decollate_batch(y_pred)]
-    )
-
-    # We process the ground-truth in the same way than the data, i.e. in patch
-    reference_process_T = Compose(
-        [
-            # Crop the volume to patch at roi position, and pad the patch if patch size is inferior to input size.
-            SpatialCrop(roi_start=start_roi, roi_end=end_roi),
-            SpatialPad(spatial_size=input_size),
-        ]
-    )
-
-    # 1. Crop and pad to input_size if necessary
-    # 2. Transform to One Hot
-    # 3. Add the batch dim
-    y = OneHotEncoding(torch.stack([reference_process_T(y)]), num_classes=2, dim=1)
-
-    metrics = evaluate(ys_pred=[y_pred_postprocess], ys_true=[y])
-
-    return metrics, y_pred, y
-
-
-def analyse_prediction(
-    model: Module,
-    x: MetaTensor,
-    y: MetaTensor,
-    patch_pos: tuple,
-    input_size: tuple,
-    device: device,
-    relative_landmark_pos: tuple,
-) -> tuple[dict, MetaTensor, MetaTensor]:
-    """
-    Perform a prediction on a patch and evaluate the resulting segmentation. Analyse the output values on a specific landmark position and define its status.
-
-    Args:
-        model           : The trained model
-        x               : The data MetaTensors (N,C,H,W,[D])
-        y               : The ground-truth MetaTensors (N,C,H,W,[D])
-        patch_pos       : The ROI of the patch [ (start, ), (end, ) ]
-        input_size      : The regular patch size. This is used for padding if cropping results in a smaller size.
-        device          : The device to store the model and data
-        landmark_pos    : The position of the landmark to analyse
-
-    Returns:
-        The tuple (metrics, y_pred, y_true).
-    """
-    metrics, y_pred, y_true = eval_patch_prediction(
-        model, x, y, patch_pos, input_size, device
-    )
-
-    # Compute the relative position of the node in the provided patch
-    relative_landmark_x = relative_landmark_pos[0]
-    relative_landmark_y = relative_landmark_pos[1]
-    relative_landmark_z = relative_landmark_pos[2]
-
-    output_channels = y_pred.shape[1]
-    act = (
-        Activations(sigmoid=True, dim=1)
-        if output_channels == 1
-        else Activations(softmax=True, dim=1)
-    )
-
-    output_values = y_pred[
-        0, :, relative_landmark_x, relative_landmark_y, relative_landmark_z
-    ]  # Get the raw output values
-    working_y_pred = act(y_pred)
-    activation_values = working_y_pred[
-        0, :, relative_landmark_x, relative_landmark_y, relative_landmark_z
-    ]  # Get the activated output values
-
-    logger.info(
-        f"Compare prediction ({working_y_pred.shape}), with ground-truth ({y_true.shape})"
-    )
-
-    working_y_pred = AsDiscrete(threshold=0.5)(working_y_pred)
-
-    #  Get the status of the point
-    if output_channels == 1:
-        if (
-            y_true[:, :, relative_landmark_x, relative_landmark_y, relative_landmark_z]
-            == True
-        ):
-            if (
-                working_y_pred[
-                    :, :, relative_landmark_x, relative_landmark_y, relative_landmark_z
-                ]
-                == True
-            ):
-                point_status = "TP"
-            else:
-                point_status = "FN"
-        else:
-            if (
-                working_y_pred[
-                    :, :, relative_landmark_x, relative_landmark_y, relative_landmark_z
-                ]
-                == True
-            ):
-                point_status = "FP"
-            else:
-                point_status = "TN"
-
-    elif output_channels == 2:
-        if (
-            y_true[:, 1, relative_landmark_x, relative_landmark_y, relative_landmark_z]
-            == True
-        ):
-            if (
-                working_y_pred[
-                    :, 1, relative_landmark_x, relative_landmark_y, relative_landmark_z
-                ]
-                == True
-            ):
-                point_status = "TP"
-            else:
-                point_status = "FN"
-        else:
-            if (
-                working_y_pred[
-                    :, 1, relative_landmark_x, relative_landmark_y, relative_landmark_z
-                ]
-                == True
-            ):
-                point_status = "FP"
-            else:
-                point_status = "TN"
-
-    else:
-        raise RuntimeError("Only binary segmentation allowed.")
-
-    pred_nfo = {
-        "point_status": point_status,
-        "output_value": output_values,
-        "activation_value": activation_values,
-        "metrics": metrics,
-    }
-
-    return pred_nfo, y_pred, y_true
-
-
 def convert_typing_to_native(data) -> dict:
     """
     Convert a dictionary containing high-level types into an identical dictionary containing only native types
@@ -363,6 +174,113 @@ def convert_typing_to_native(data) -> dict:
         return data
 
 
+def extract_patch(I, patch_pos, patch_size):
+    start_roi, end_roi = patch_pos
+
+    pipeline_T = Compose(
+        [
+            # Crop the volume to patch at roi position, and pad the patch if patch size is inferior to input size.
+            SpatialCrop(roi_start=start_roi, roi_end=end_roi),
+            SpatialPad(spatial_size=patch_size),
+        ]
+    )
+
+    # Not supposed to be batched but more safe
+    I = torch.stack([pipeline_T(i) for i in decollate_batch(I)])
+
+    return I
+
+
+def raw_predict(x, model):
+
+    y_pred = infer_single_data(
+        model=model,
+        data=x,
+        device=device,
+        postprocessing=None,
+    )[0] # We already know the dimension : [MetaTensor(1,C,H,W,D)]
+
+    return y_pred
+
+
+def eval(y_pred, y_true, postprocess=None):
+
+    print("DEBUG__", "y_pred", y_pred.shape, "y_true", y_true.shape)
+
+    output_channels = y_pred.shape[1]
+
+    if postprocess is None:
+        postprocess_T = Compose([])
+
+    y_pred = torch.stack(
+        [postprocess_T(i) for i in decollate_batch(y_pred)]
+    )
+
+    # Add the batch dimension to y_true
+    y_true = torch.stack([y_true])
+
+    if output_channels == 1:
+        y_true  = OneHotEncoding(labels=y_true, num_classes=2)
+        y_pred  = OneHotEncoding(labels=y_pred, num_classes=2)
+    elif output_channels >= 1:
+        y_true  = OneHotEncoding(labels=y_true, num_classes=output_channels)
+
+    print("DEBUG__", "after OHE - y_pred", y_pred.shape, "y_true", y_true.shape)
+
+    metrics = evaluate(ys_pred=[y_pred], ys_true=[y_true])
+
+    return metrics
+
+
+def analyse_prediction(y_pred, y_true, relative_landmark_pos):
+
+    output_channels = y_pred.shape[1]
+
+    # Activate and binarize
+    act = Activations(sigmoid=True) if output_channels == 1 else Activations(softmax=True)
+    binarize = AsDiscrete(threshold=0.5)
+    # Maybe include a saver here
+
+    metrics_y_pred = eval(y_pred, y_true, postprocess=Compose([act, binarize]))
+
+    slice_ = (0, slice(None), relative_landmark_pos[0], relative_landmark_pos[1], relative_landmark_pos[2])
+
+    output_values = y_pred[slice_] # Get the raw output values
+
+    y_pred = act(y_pred)
+    activation_values = y_pred[slice_] # Get the raw output values
+
+    logger.info(
+        f"Compare prediction ({y_pred.shape}), with ground-truth ({y_true.shape})"
+    )
+
+    y_pred = binarize(y_pred)
+
+    #  Get the status of the point
+    assert output_channels > 0 and output_channels < 3, f"Only binary segmentation allowed, but got {output_channels} output channels" 
+    slice_= (slice(None), output_channels-1, relative_landmark_pos[0], relative_landmark_pos[1], relative_landmark_pos[2])
+
+    if y_true[slice_] == True:
+        if y_pred[slice_] == True:
+            point_status = "TP"
+        else:
+            point_status = "FN"
+    else:
+        if y_pred[slice_] == True:
+            point_status = "FP"
+        else:
+            point_status = "TN"
+
+    pred_nfo = {
+        "point_status": point_status,
+        "output_value": output_values,
+        "activation_value": activation_values,
+        "metrics": metrics_y_pred,
+    }
+
+    return pred_nfo
+
+
 def main():
     # Select the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -395,15 +313,40 @@ def main():
     # Load hyperparameters for training
     hyperparameters = load_hyperparameters(hyperparameters_path)
 
-    in_channels = hyperparameters["in_channels"]
-    out_channels = hyperparameters["out_channels"]
-    sw_shape = hyperparameters["input_shape"]
+    in_channels     = hyperparameters["in_channels"]
+    out_channels    = hyperparameters["out_channels"]
+    is_patch        = hyperparameters["patch"]
+    input_shape     = hyperparameters["input_shape"] # TODO : Maybe not mandatory if whole volume. In this case, some changes to perform in code
 
     # Load the image and its associated ground-truth
-    I_x, meta = LoadImage(image_only=False, ensure_channel_first=True)(
-        x_path
-    )  # Assume x's metadata as reference
+    # Assume x's metadata as reference
+    I_x, meta = LoadImage(image_only=False, ensure_channel_first=True)(x_path)
     I_y_true = LoadImage(image_only=True, ensure_channel_first=True)(y_true_path)
+
+    spatial_offset = 0
+
+    if is_patch:
+        patch_pos = read_path_position_from_file(patch_pos_path)
+
+        I_x         = extract_patch(I_x, input_shape, patch_pos)
+        I_y_true    = extract_patch(I_y_true, input_shape, patch_pos)
+
+        spatial_offset = (patch_pos[0][0], patch_pos[0][1], patch_pos[0][2])
+
+    # Load the graph and convert to image coordinate system
+    vessel_graph = LoadVesselGraph(graph_path)
+    vessel_graph = Anatomic2ImageGraph(vessel_graph, meta["original_affine"])
+    
+    landmark = get_landmark_obj(
+        graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id
+    )
+
+    # Compute the relative position of the node
+    relative_landmark_pos = (
+        landmark.pos[0] - spatial_offset[0],
+        landmark.pos[1] - spatial_offset[1],
+        landmark.pos[2] - spatial_offset[2],
+    )
 
     # ------------------------ #
     #   PREDICTIONS ANALYSIS   #
@@ -414,23 +357,6 @@ def main():
     I_x = I_x.to(device)
     I_y_true = I_y_true.to(device)
 
-    patch_pos = read_path_position_from_file(patch_pos_path)
-
-    # Load the graph and convert to image coordinate system
-    vessel_graph = LoadVesselGraph(graph_path)
-    vessel_graph = Anatomic2ImageGraph(vessel_graph, meta["original_affine"])
-
-    landmark = get_landmark_obj(
-        graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id
-    )
-
-    # Compute the relative position of the node in the provided patch
-    relative_landmark_pos = (
-        landmark.pos[0] - patch_pos[0][0],
-        landmark.pos[1] - patch_pos[0][1],
-        landmark.pos[2] - patch_pos[0][2],
-    )
-
     model = init_inference_model(
         model_name=model_name,
         weights_path=weights_path,
@@ -438,15 +364,8 @@ def main():
         out_channels=out_channels,
         device=device,
     )
-    pred_res, y_pred_patch, y_true_patch = analyse_prediction(
-        model=model,
-        x=I_x,
-        y=I_y_true,
-        patch_pos=patch_pos,
-        input_size=sw_shape,
-        device=device,
-        relative_landmark_pos=relative_landmark_pos,
-    )
+    y_pred = raw_predict(I_x, model)
+    metrics = analyse_prediction(y_pred, I_y_true, relative_landmark_pos)
 
     # ------------------------ #
     #      OBJECT ANALYSIS     #
@@ -454,30 +373,31 @@ def main():
     logger.info("Vessel object analysis ...")
     logger.info("__________________________")
 
-    transform_obj_analysis = Compose(
+    morpho_T = Compose(
         [
             AsDiscrete(threshold=0.5),  # Ensure the ground-truth is binary
             ToTensor(),
         ]
     )
 
+    # Get the foreground channel if OHE
     if out_channels == 2:
-        y_true_patch = y_true_patch[:, 1, :]
+        y_true_patch = y_true_patch[:, 1]
     elif out_channels > 2:
         raise ValueError("Non-binary models are not allowed")
 
-    logger.info("Compute global vessel size...")
-    vessel_thickness_global = compute_vessel_thickness(
-        torch.squeeze(transform_obj_analysis(I_y_true)), landmark.pos
-    )
-    logger.info("Compute patch vessel size...")
-    vessel_thickness_patch = compute_vessel_thickness(
-        torch.squeeze(transform_obj_analysis(y_true_patch)), relative_landmark_pos
+    if is_patch:
+        logger.info("Compute patch vessel size...")
+    else:
+        logger.info("Compute vessel size...")
+        
+    vessel_thickness = compute_vessel_thickness(
+        torch.squeeze(morpho_T(I_y_true), dim=0), relative_landmark_pos
     )
 
-    relative_patch_center_pos = np.array(sw_shape) / 2
-    dist_landmark_from_patch_center = distance(
-        relative_landmark_pos, relative_patch_center_pos, norm="L2"
+    relative_I_center_pos = np.array(input_shape) / 2
+    dist_landmark_from_I_center = distance(
+        relative_landmark_pos, relative_I_center_pos, norm="L2"
     )
 
     # ------------------------- #
@@ -532,26 +452,27 @@ def main():
     _SAVE_INTERMEDIATE_RES = True
 
     if _SAVE_INTERMEDIATE_RES == True:
-        # Completely awful but very useful
-        SaveImage(
-            output_dir=os.path.join(cfg.result_dir, "blobs"),
+
+        intermediate_saver = SaveImage(
+            output_dir="",
             output_ext=".nii.gz",
-            output_postfix=f"blobs",
+            output_postfix="",
             resample=False,
             separate_folder=False
-        )(blobs_mask, meta_attribution)
+        )
 
-        model_id, _ = os.path.splitext(os.path.basename(weights_path))
-        idx_involved_patch = os.path.splitext(os.path.basename(attribution_path))[0].split("_")[8]
-        output_prefix = f"seg_{model_id}_{landmark_type}_{landmark_id}_{idx_involved_patch}"
+        intermediate_saver.folder_layout.output_dir = os.path.join(cfg.result_dir, "blobs")
+        intermediate_saver.folder_layout.postfix = "blobs"
+        intermediate_saver(blobs_mask, meta_attribution)
 
-        SaveImage(
-            output_dir=os.path.join(cfg.result_dir, "inferences"),
-            output_ext=".nii.gz",
-            output_postfix=output_prefix,
-            resample=False,
-            separate_folder=False
-        )(y_pred_patch, meta_attribution)
+        output_prefix = f"raw_output_{os.path.splitext(os.path.basename(weights_path))}_{landmark_type}_{landmark_id}"
+        if is_patch:
+            idx_involved_patch = os.path.splitext(os.path.basename(attribution_path))[0].split("_")[8]
+            output_prefix += f"_{idx_involved_patch}"
+
+        intermediate_saver.folder_layout.output_dir = os.path.join(cfg.result_dir, "inferences")
+        intermediate_saver.folder_layout.postfix  = output_prefix
+        intermediate_saver(y_pred, meta_attribution)
 
     # Define the basic structure of the file
     res_output = {
@@ -566,13 +487,12 @@ def main():
         "absolute_position": landmark.pos,
         "relative_position": relative_landmark_pos,
         "degree": landmark.degree,
-        "absolute_thickness": vessel_thickness_global,
-        "relative_thickness": vessel_thickness_patch,
-        "distance_from_center": dist_landmark_from_patch_center
+        "relative_thickness": vessel_thickness,
+        "distance_from_center": dist_landmark_from_I_center
     }
 
     # About the prediction
-    res_output["inference"] = { "patch_position": patch_pos } | pred_res
+    res_output["inference"] = { "patch_position": patch_pos } | metrics if is_patch else metrics
     
     # About the attribution map
     res_output["attribution"] = attribution_stats

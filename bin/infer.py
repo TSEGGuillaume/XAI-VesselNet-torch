@@ -74,12 +74,12 @@ def parse_arguments():
     return args
 
 
-def infer_patch(
+def infer_single_data(
     model: Module,
     data: MetaTensor,
     device: torch.device,
-    patch_pos: list,
-    input_size: tuple,
+    patch_pos: list = None,
+    input_size: tuple = None,
     postprocessing: Transform = None,
 ) -> list[MetaTensor]:
     """
@@ -103,16 +103,22 @@ def infer_patch(
     if isinstance(data, MetaTensor) == False:
         raise TypeError(f"Expected `MetaTensor`, got {type(data)}")
 
-    # Pre-processing
-    start_roi, end_roi = patch_pos
+    pre_T_composer = None
 
-    pre_T_composer = Compose(
-        [
-            # Crop the volume to patch at roi position, and pad the patch if patch size is inferior to input size.
-            SpatialCrop(roi_start=start_roi, roi_end=end_roi),
-            SpatialPad(spatial_size=input_size),
-        ]
-    )
+    if patch_pos or input_size:
+        if patch_pos and input_size:
+            # Pre-processing
+            start_roi, end_roi = patch_pos
+
+            pre_T_composer = Compose(
+                [
+                    # Crop the volume to patch at roi position, and pad the patch if patch size is inferior to input size.
+                    SpatialCrop(roi_start=start_roi, roi_end=end_roi),
+                    SpatialPad(spatial_size=input_size),
+                ]
+            )
+        else:
+            raise ValueError("Patch extraction has been requested but ``patch_pos`` or ``input_size`` is missing.")
 
     # Manage the data
     logger.debug("MetaTensor provided. Collate the data through a DataLoader...")
@@ -222,6 +228,8 @@ def main():
     in_channels = hyperparameters["in_channels"]
     out_channels = hyperparameters["out_channels"]
 
+    is_patch = hyperparameters["patch"]
+
     # Load the trained model
     model = init_inference_model(
         model_name=model_name,
@@ -242,13 +250,16 @@ def main():
     ), "Provided `in_channels` in hyperparamaeters file does not match the actual image channel"
 
     # Prepare the inferer
-    sw_batch_size = hyperparameters["batch_size"]
-    sw_shape = hyperparameters["input_shape"]
-    sw_overlap = hyperparameters["patch_overlap"]
+    if is_patch:
+        sw_batch_size   = hyperparameters["batch_size"]
+        sw_shape        = hyperparameters["input_shape"]
+        sw_overlap      = hyperparameters["patch_overlap"]
 
-    inferer = SlidingWindowInferer(
-        sw_shape, sw_batch_size=sw_batch_size, overlap=sw_overlap
-    )
+        inferer = SlidingWindowInferer(
+            sw_shape, sw_batch_size=sw_batch_size, overlap=sw_overlap
+        )
+    else:
+        inferer = SimpleInferer()
 
     # To save the image. Deported from the inference function to allow customization
     save_seg = SaveImage(
@@ -261,7 +272,7 @@ def main():
 
     transforms = Compose(
         [
-            Activations(sigmoid=True),
+            Activations(sigmoid=True) if out_channels == 1 else Activations(softmax=True),
             AsDiscrete(threshold=0.5),
             RemoveSmallObjects(),
             save_seg,

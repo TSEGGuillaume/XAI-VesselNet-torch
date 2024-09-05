@@ -12,7 +12,7 @@ import torch
 
 from monai.data.meta_tensor import MetaTensor
 from monai.data import DataLoader
-from monai.inferers import SlidingWindowInferer
+from monai.inferers import SlidingWindowInferer, SimpleInferer
 from monai.transforms import (
     Compose,
     Activations,
@@ -223,6 +223,8 @@ def main():
     in_channels = hyperparameters["in_channels"]
     out_channels = hyperparameters["out_channels"]
 
+    is_patch = hyperparameters["patch"]
+
     # Load the trained model
     model = init_inference_model(
         model_name=model_name,
@@ -244,13 +246,16 @@ def main():
     ), "Provided `in_channels` in hyperparamaeters file does not match the actual image channel"
 
     # Prepare the inferer
-    sw_batch_size   = hyperparameters["batch_size"]
-    sw_shape        = hyperparameters["input_shape"]
-    sw_overlap      = hyperparameters["patch_overlap"]
+    if is_patch:
+        sw_batch_size   = hyperparameters["batch_size"]
+        sw_shape        = hyperparameters["input_shape"]
+        sw_overlap      = hyperparameters["patch_overlap"]
 
-    inferer = SlidingWindowInferer(
-        sw_shape, sw_batch_size=sw_batch_size, overlap=sw_overlap
-    )
+        inferer = SlidingWindowInferer(
+            sw_shape, sw_batch_size=sw_batch_size, overlap=sw_overlap
+        )
+    else:
+        inferer = SimpleInferer()
 
     # To save the image. Deported from the inference function to allow customization
     save_seg = SaveImage(
