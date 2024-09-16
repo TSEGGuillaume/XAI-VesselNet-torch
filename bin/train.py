@@ -21,7 +21,7 @@ from monai.transforms import (
 )
 from monai.metrics import DiceMetric
 from monai.losses import DiceFocalLoss
-from monai.inferers import sliding_window_inference, SimpleInferer
+from monai.inferers import sliding_window_inference, SimpleInferer, SlidingWindowInferer
 from monai.data.utils import decollate_batch
 from monai.networks.utils import one_hot as OneHotEncoding
 from monai.visualize.img2tensorboard import plot_2d_or_3d_image
@@ -114,9 +114,16 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
     # Validation hyperparameters
     val_interval = 1
 
-    sw_batch_size = hyperparameters["batch_size"] # How many sliding windows processed at the same time
     is_patch      = hyperparameters["patch"]
-    sw_patch_size = hyperparameters["input_shape"]
+
+    if is_patch:
+        sw_batch_size   = hyperparameters["batch_size"] # How many sliding windows processed at the same time
+        sw_patch_size   = hyperparameters["input_shape"]
+        sw_overlap      = hyperparameters["patch_overlap"]
+
+        inferer = SlidingWindowInferer(roi_size=sw_patch_size, sw_batch_size=sw_batch_size, overlap=sw_overlap)
+    else:
+        inferer = SimpleInferer()
     
     val_metric = DiceMetric(include_background=include_background, reduction="mean")
 
@@ -199,13 +206,8 @@ def fit(model: Module, train_loader: DataLoader, val_loader: DataLoader, hyperpa
 
                     val_inputs, val_labels = val_data["img"].to(device), val_data["seg"].to(device)
 
-                    if is_patch:
-                        val_outputs = sliding_window_inference(
-                            val_inputs, sw_patch_size, sw_batch_size, model
-                        )
-                    else:
-                        val_outputs = SimpleInferer()(val_inputs, model)
-
+                    val_outputs = inferer(val_inputs, model)
+                    
                     val_loss = loss_function(val_outputs, val_labels) # Compute the validation loss for current iteration
                     logger.debug(f"Current val loss : {val_loss.item()}")
 
