@@ -27,7 +27,7 @@ def init_inference_model(
     model = instanciate_model.instanciate_model(
         model_name, in_channels=in_channels, out_channels=out_channels
     ).to(device)
-    model.load_state_dict(torch.load(weights_path)["model_state_dict"])
+    model.load_state_dict(torch.load(weights_path, map_location=device)["model_state_dict"])
     model.eval()
 
     return model
