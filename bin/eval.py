@@ -12,13 +12,15 @@ import torch
 
 from monai.data.meta_tensor import MetaTensor
 from monai.data import DataLoader
-from monai.inferers import SlidingWindowInferer
+from monai.inferers import SlidingWindowInferer, SimpleInferer
 from monai.transforms import (
     Compose,
     Activations,
     AsDiscrete,
     SaveImage,
     LoadImage,
+    DivisiblePad,
+    Invert,
 )
 from monai.metrics import (
     DiceMetric,
@@ -223,6 +225,8 @@ def main():
     in_channels = hyperparameters["in_channels"]
     out_channels = hyperparameters["out_channels"]
 
+    is_patch = hyperparameters["patch"]
+
     # Load the trained model
     model = init_inference_model(
         model_name=model_name,
@@ -232,25 +236,29 @@ def main():
         device=device,
     )
 
-    infer_ds = instanciate_image_dataset(dataset_path, image_only=True)
-    infer_loader = DataLoader(
-        infer_ds, batch_size=_CONST_BATCH_SIZE, shuffle=False, num_workers=0
-    )
+    # Prepare the inferer
+    if is_patch:
+        sw_batch_size   = hyperparameters["batch_size"]
+        sw_shape        = hyperparameters["input_shape"]
+        sw_overlap      = hyperparameters["patch_overlap"]
+
+        inferer = SlidingWindowInferer(
+            sw_shape, sw_batch_size=sw_batch_size, overlap=sw_overlap
+        )
+        preprocessing_T = None
+    else:
+        inferer = SimpleInferer()
+        preprocessing_T = DivisiblePad(k=8, method="end", mode="constant")
+
+   # Load the data to evaluate
+    infer_ds = instanciate_image_dataset(dataset_path, image_only=True, transform=preprocessing_T)
+    infer_loader = DataLoader(infer_ds, batch_size=_CONST_BATCH_SIZE, shuffle=False, num_workers=0)
 
     # Verify that the provided `in_channels` in the setting file matches the actual data channels
     # Assume the same input channels through the whole dataset
     assert (
         in_channels == first(infer_loader)["img"].shape[1]
     ), "Provided `in_channels` in hyperparamaeters file does not match the actual image channel"
-
-    # Prepare the inferer
-    sw_batch_size   = hyperparameters["batch_size"]
-    sw_shape        = hyperparameters["patch_size"]
-    sw_overlap      = hyperparameters["patch_overlap"]
-
-    inferer = SlidingWindowInferer(
-        sw_shape, sw_batch_size=sw_batch_size, overlap=sw_overlap
-    )
 
     # To save the image. Deported from the inference function to allow customization
     save_seg = SaveImage(
@@ -262,14 +270,13 @@ def main():
     )
 
     # Post-transform
-    transforms = Compose(
-        [
-            Activations(sigmoid=True) if out_channels == 1 else Activations(softmax=True),
-            AsDiscrete(threshold=0.5),
-            # RemoveSmallObjects(),
-            save_seg,
-        ]
-    )
+    pipeline = ([Invert(preprocessing_T)] if not is_patch else []) + [
+        Activations(sigmoid=True) if out_channels == 1 else Activations(softmax=True),
+        AsDiscrete(threshold=0.5),
+        #RemoveSmallObjects(),
+        save_seg,
+    ]
+    transforms = Compose(pipeline)
 
     ys_pred = infer(
         model=model,
@@ -314,7 +321,7 @@ def main():
     for idx_sample in infer_loader.sampler:
         ys_true.append(
             OneHotEncoding(
-                torch.unsqueeze(infer_ds[idx_sample]["seg"], axis=0),
+                torch.unsqueeze(preprocessing_T.inverse(infer_ds[idx_sample]["seg"]) if preprocessing_T is not None else infer_ds[idx_sample]["seg"], axis=0),
                 num_classes=2,
                 dim=1,
             ).to(device)

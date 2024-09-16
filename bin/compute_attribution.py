@@ -125,8 +125,7 @@ def main():
     in_channels     = hyperparameters["in_channels"]
     out_channels    = hyperparameters["out_channels"]
 
-    sw_shape    = [in_channels] + hyperparameters["patch_size"] # All dimensions should be specified
-    sw_overlap  = [0] + [hyperparameters["patch_overlap"]] * len(hyperparameters["patch_size"])
+    is_patch = hyperparameters["patch"]
 
     # Image
     I, meta = LoadImage(image_only=False, ensure_channel_first=True)(x_path)
@@ -183,78 +182,126 @@ def main():
         output_dtype=I.dtype,
     )
 
-    patches = iter_patch(I.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant")
-    idx_involved_patch = 0
+    if is_patch:
+        sw_shape    = [in_channels] + hyperparameters["input_shape"] # All dimensions should be specified
+        sw_overlap  = [0] + [hyperparameters["patch_overlap"]] * len(hyperparameters["input_shape"])
 
-    for patch, pos in patches:
-        if (
-            landmark.pos[0] >= pos[1, 0]
-            and landmark.pos[0] < pos[1, 1]
-            and landmark.pos[1] >= pos[2, 0]
-            and landmark.pos[1] < pos[2, 1]
-            and landmark.pos[2] >= pos[3, 0]
-            and landmark.pos[2] < pos[3, 1]
-        ):
-            patch = (
-                torch.from_numpy(np.expand_dims(patch, axis=0))
-                .type(torch.FloatTensor)
-                .to(device)
-            )  # TODO: improve this conversion
-            patch.requires_grad = True  # Not sure this is requiered
+        patches = iter_patch(I.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant")
+        idx_involved_patch = 0
 
-            logger.debug(f"Patch shape: {patch.shape} - {pos.tolist()}")
+        for patch, pos in patches:
+            if (
+                landmark.pos[0] >= pos[1, 0]
+                and landmark.pos[0] < pos[1, 1]
+                and landmark.pos[1] >= pos[2, 0]
+                and landmark.pos[1] < pos[2, 1]
+                and landmark.pos[2] >= pos[3, 0]
+                and landmark.pos[2] < pos[3, 1]
+            ):
+                patch = (
+                    torch.from_numpy(np.expand_dims(patch, axis=0))
+                    .type(torch.FloatTensor)
+                    .to(device)
+                )  # TODO: improve this conversion
+                patch.requires_grad = True  # Not sure this is requiered
 
-            # Compute targeted landmark in the patch coordinate system
-            for idx_output_channel in range(out_channels):
+                logger.debug(f"Patch shape: {patch.shape} - {pos.tolist()}")
+
+                # Compute targeted landmark in the patch coordinate system
+                for idx_output_channel in range(out_channels):
+                # For outputs with > 2 dimensions, targets can be either:
+                #  - A single tuple, which contains #output_dims - 1 elements. This target index is applied to all examples.
+                #  - A list of tuples with length equal to the number of examples in inputs (dim 0), and each tuple containing #output_dims - 1 elements.
+                #     Each tuple is applied as the target for the corresponding example.
+                    target = (
+                        idx_output_channel,
+                        landmark.pos[0] - pos[1, 0],
+                        landmark.pos[1] - pos[2, 0],
+                        landmark.pos[2] - pos[3, 0],
+                    )
+                    logger.info(f"Relative target: {target}")
+
+                    for xai_key, xai_method in mapping.items():
+
+                        stime = time.time()
+                        attribution = xai_method.attribute(
+                            inputs=patch, target=target, **kwargs[xai_key]
+                        )
+                        etime = time.time()
+                        logger.info(
+                            f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
+                        )
+
+                        logger.debug(
+                            "Attribution shape : {} | sum: {}".format(
+                                attribution.shape, torch.sum(attribution)
+                            )
+                        )
+
+                        # Saving the attribution of the patch
+                        output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
+                        basic_postfix = f"{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
+
+                        # Attribution channels are saved separately
+                        for idx_input_channel in range(in_channels):
+                            save.folder_layout.postfix = (
+                                basic_postfix + f"_ichan{idx_input_channel}"
+                            )  # Update the postfix to add index for channel
+                            save(attribution[0, idx_input_channel, :, :, :], meta_data=meta)
+
+                        # We could have avoided saving the position file for each attribution method, but it's easier to associate an attribution with a position if they share the same basename.
+                        with open(
+                            os.path.join(shared_output_dir, output_fname_pos + ".txt"), "w"
+                        ) as f:
+                            f.write(
+                                f"{pos[1,0]};{pos[1,1]}\n{pos[2,0]};{pos[2,1]}\n{pos[3,0]};{pos[3,1]}"
+                            )
+
+                idx_involved_patch += 1
+    
+    else:
+        for idx_output_channel in range(out_channels):
             # For outputs with > 2 dimensions, targets can be either:
             #  - A single tuple, which contains #output_dims - 1 elements. This target index is applied to all examples.
             #  - A list of tuples with length equal to the number of examples in inputs (dim 0), and each tuple containing #output_dims - 1 elements.
             #     Each tuple is applied as the target for the corresponding example.
-                target = (
-                    idx_output_channel,
-                    landmark.pos[0] - pos[1, 0],
-                    landmark.pos[1] - pos[2, 0],
-                    landmark.pos[2] - pos[3, 0],
+
+            # TODO : vérifier qu'aucun padding ne soit nécessaire. Sinon il faut calculer la position en tenant compte du padding.
+            # Peut-être que le plus simple sera alors de padding non symétrique pour ne rien changer sur la position
+            target = (
+                idx_output_channel,
+                landmark.pos[0],
+                landmark.pos[1],
+                landmark.pos[2],
+            )
+            logger.info(f"Relative target: {target}")
+
+            for xai_key, xai_method in mapping.items():
+
+                stime = time.time()
+                attribution = xai_method.attribute(
+                    inputs=I, target=target, **kwargs[xai_key] # TODO : vérifier si I a besoin de la dimension batch ou non ?
                 )
-                logger.info(f"Relative target: {target}")
+                etime = time.time()
+                logger.info(
+                    f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
+                )
 
-                for xai_key, xai_method in mapping.items():
-
-                    stime = time.time()
-                    attribution = xai_method.attribute(
-                        inputs=patch, target=target, **kwargs[xai_key]
+                logger.debug(
+                    "Attribution shape : {} | sum: {}".format(
+                        attribution.shape, torch.sum(attribution)
                     )
-                    etime = time.time()
-                    logger.info(
-                        f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
-                    )
+                )
 
-                    logger.debug(
-                        "Attribution shape : {} | sum: {}".format(
-                            attribution.shape, torch.sum(attribution)
-                        )
-                    )
+                # Saving the attribution of the patch
+                basic_postfix = f"{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_ochan{idx_output_channel}"
 
-                    # Saving the attribution of the patch
-                    output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
-                    basic_postfix = f"{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
-
-                    # Attribution channels are saved separately
-                    for idx_input_channel in range(in_channels):
-                        save.folder_layout.postfix = (
-                            basic_postfix + f"_ichan{idx_input_channel}"
-                        )  # Update the postfix to add index for channel
-                        save(attribution[0, idx_input_channel, :, :, :], meta_data=meta)
-
-                    # We could have avoided saving the position file for each attribution method, but it's easier to associate an attribution with a position if they share the same basename.
-                    with open(
-                        os.path.join(shared_output_dir, output_fname_pos + ".txt"), "w"
-                    ) as f:
-                        f.write(
-                            f"{pos[1,0]};{pos[1,1]}\n{pos[2,0]};{pos[2,1]}\n{pos[3,0]};{pos[3,1]}"
-                        )
-
-            idx_involved_patch += 1
+                # Attribution channels are saved separately
+                for idx_input_channel in range(in_channels):
+                    save.folder_layout.postfix = (
+                        basic_postfix + f"_ichan{idx_input_channel}"
+                    )  # Update the postfix to add index for channel
+                    save(attribution[0, idx_input_channel, :, :, :], meta_data=meta)
 
 
 if __name__ == "__main__":
