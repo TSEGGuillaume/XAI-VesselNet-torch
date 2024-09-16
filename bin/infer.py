@@ -17,6 +17,8 @@ from monai.transforms import (
     RemoveSmallObjects,
     SpatialCrop,
     SpatialPad,
+    DivisiblePad,
+    Invert,
 )
 from monai.transforms import SaveImage
 
@@ -239,16 +241,6 @@ def main():
         device=device,
     )
 
-    # Load the data to infer
-    infer_ds = instanciate_image_dataset(dataset_path, image_only=False)
-    infer_loader = DataLoader(infer_ds, batch_size=_CONST_BATCH_SIZE, num_workers=0)
-
-    # Verify that the provided `in_channels` in the setting file matches the actual data channels
-    # Assume the same input channels through the whole dataset
-    assert (
-        in_channels == first(infer_loader)["img"].shape[1]
-    ), "Provided `in_channels` in hyperparamaeters file does not match the actual image channel"
-
     # Prepare the inferer
     if is_patch:
         sw_batch_size   = hyperparameters["batch_size"]
@@ -258,8 +250,21 @@ def main():
         inferer = SlidingWindowInferer(
             sw_shape, sw_batch_size=sw_batch_size, overlap=sw_overlap
         )
+        preprocessing_T = None
+
     else:
         inferer = SimpleInferer()
+        preprocessing_T = DivisiblePad(k=8, method="end", mode="constant")
+
+   # Load the data to infer
+    infer_ds = instanciate_image_dataset(dataset_path, image_only=False, transform=preprocessing_T)
+    infer_loader = DataLoader(infer_ds, batch_size=_CONST_BATCH_SIZE, num_workers=0)
+
+    # Verify that the provided `in_channels` in the setting file matches the actual data channels
+    # Assume the same input channels through the whole dataset
+    assert (
+        in_channels == first(infer_loader)["img"].shape[1]
+    ), "Provided `in_channels` in hyperparamaeters file does not match the actual image channel"
 
     # To save the image. Deported from the inference function to allow customization
     save_seg = SaveImage(
@@ -269,15 +274,14 @@ def main():
         resample=False,
         separate_folder=False,
     )
-
-    transforms = Compose(
-        [
-            Activations(sigmoid=True) if out_channels == 1 else Activations(softmax=True),
-            AsDiscrete(threshold=0.5),
-            RemoveSmallObjects(),
-            save_seg,
-        ]
-    )
+    
+    pipeline = ([Invert(preprocessing_T)] if not is_patch else []) + [
+        Activations(sigmoid=True) if out_channels == 1 else Activations(softmax=True),
+        AsDiscrete(threshold=0.5),
+        RemoveSmallObjects(),
+        save_seg,
+    ]
+    transforms = Compose(pipeline)
 
     predictions = infer(
         model=model,
