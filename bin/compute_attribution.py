@@ -124,7 +124,7 @@ def define_attribution_methods(model: torch.nn.Module) -> tuple[dict]:
         # Inputs and targets are directly given in the call of attribute
         "IntegratedGradients": {
             "baselines": None,  # use zero scalar corresponding to each input tensor
-            "n_steps": 50,
+            "n_steps": 100,
         },
         "InputXGradient": {
             # No more parameters than input and target. See attribute()
