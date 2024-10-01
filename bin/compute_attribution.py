@@ -102,6 +102,38 @@ def parse_arguments():
     return parser.parse_args()
 
 
+def define_attribution_methods(model: torch.nn.Module) -> tuple[dict]:
+    """
+    Define attribution methods and associated parameters.
+
+    Available XAI methods are: 
+        - IntegratedGradients
+        - InputXGradient
+
+    Args:
+        model : The trained model to explain
+
+    Returns:
+        The tuple (methods, parameters). Both elements are dictionaries whose keys are the names of XAI methods.
+    """
+    mapping = {
+        "IntegratedGradients": IntegratedGradients(model),
+        "InputXGradient": InputXGradient(model),
+    }
+    kwargs = {
+        # Inputs and targets are directly given in the call of attribute
+        "IntegratedGradients": {
+            "baselines": None,  # use zero scalar corresponding to each input tensor
+            "n_steps": 50,
+        },
+        "InputXGradient": {
+            # No more parameters than input and target. See attribute()
+        },
+    }
+
+    return mapping, kwargs
+
+
 def main():
     # Select the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -153,6 +185,7 @@ def main():
         device=device,
     )
 
+    # Activate the model output is activation has been requested
     if activation == True:
         if out_channels==1:
             act = Sigmoid()
@@ -162,21 +195,7 @@ def main():
             raise ValueError("Non-binary models are not allowed")
         model = Sequential(model, act)
 
-    # Explanation methods
-    mapping = {
-        "IntegratedGradients": IntegratedGradients(model),
-        "InputXGradient": InputXGradient(model),
-    }
-    kwargs = {
-        # Inputs and targets are directly given in the call of attribute
-        "IntegratedGradients": {
-            "baselines": None,  # use zero scalar corresponding to each input tensor
-            "n_steps": 50,
-        },
-        "InputXGradient": {
-            # No more parameters than input and target. See attribute()
-        },
-    }
+    xai_mapping, kwargs = define_attribution_methods(model)
 
     # Prepare the output
     shared_output_dir = os.path.join(cfg.result_dir, "attributions")
@@ -229,7 +248,7 @@ def main():
                     )
                     logger.info(f"Relative target: {target}")
 
-                    for xai_key, xai_method in mapping.items():
+                    for xai_key, xai_method in xai_mapping.items():
 
                         stime = time.time()
                         attribution = xai_method.attribute(
@@ -284,7 +303,7 @@ def main():
             )
             logger.info(f"Relative target: {target}")
 
-            for xai_key, xai_method in mapping.items():
+            for xai_key, xai_method in xai_mapping.items():
 
                 stime = time.time()
                 attribution = xai_method.attribute(
