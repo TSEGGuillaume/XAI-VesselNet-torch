@@ -7,6 +7,7 @@ import torch
 import numpy as np
 
 from torch.nn import Sequential, Softmax, Sigmoid
+from monai.data.meta_tensor import MetaTensor
 from monai.transforms import LoadImage, SaveImage
 from monai.data.utils import iter_patch
 
@@ -134,6 +135,41 @@ def define_attribution_methods(model: torch.nn.Module) -> tuple[dict]:
     return mapping, kwargs
 
 
+def compute_attribution(xai_methods: dict, xai_kwargs: dict, image: MetaTensor, target: tuple) -> dict:
+    """
+    Compute attribution maps using all XAI methods provided
+
+    Args:
+        xai_methods : The XAI methods to use
+        xai_kwargs  : The associated method parameters
+        image       : The image for which attribution maps are computed.
+        target      : The output indices for which attribution maps are computed.
+        
+    Returns: The dictionnary that map XAI method names with computed attribution maps.
+        
+    """
+    out = {}
+
+    for xai_key, xai_method in xai_methods.items():
+
+        stime = time.time()
+        attribution = xai_method.attribute(
+            inputs=image, target=target, **xai_kwargs[xai_key]
+        )
+        etime = time.time()
+        logger.info(
+            f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
+        )
+
+        logger.debug(
+            f"Attribution shape : {attribution.shape} | sum: {torch.sum(attribution)}"
+        )
+
+        out[xai_key] = attribution
+
+    return out
+
+
 def main():
     # Select the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -210,7 +246,7 @@ def main():
     )
 
     if is_patch:
-        sw_shape    = [in_channels] + hyperparameters["input_shape"] # All dimensions should be specified
+        sw_shape    = [in_channels] + hyperparameters["input_shape"] # All dimensions should be specified, except batch ; see target doc.
         sw_overlap  = [0] + [hyperparameters["patch_overlap"]] * len(hyperparameters["input_shape"])
 
         patches = iter_patch(I.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant")
@@ -248,37 +284,27 @@ def main():
                     )
                     logger.info(f"Relative target: {target}")
 
-                    for xai_key, xai_method in xai_mapping.items():
+                    attributions = compute_attribution(xai_mapping, kwargs, image=patch, target=target)
 
-                        stime = time.time()
-                        attribution = xai_method.attribute(
-                            inputs=patch, target=target, **kwargs[xai_key]
-                        )
-                        etime = time.time()
-                        logger.info(
-                            f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
-                        )
+                    # Out
+                    id_model    = os.path.splitext(os.path.basename(weights_path))[0]
+                    for attribution_name, attribution_map in attributions.items():
+                        # No need to include id_data as SaveImage automatically include it based on metadata
+                        out_fname_prefix = f"{id_model}_{attribution_name}_{landmark_type}_{landmark_id}_{idx_involved_patch}" 
 
-                        logger.debug(
-                            "Attribution shape : {} | sum: {}".format(
-                                attribution.shape, torch.sum(attribution)
-                            )
-                        )
-
-                        # Saving the attribution of the patch
-                        output_fname_pos = f"{os.path.basename(x_path).split('.')[0]}_{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_pos"
-                        basic_postfix = f"{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_{idx_involved_patch}_ochan{idx_output_channel}"
-
-                        # Attribution channels are saved separately
+                        # Attribution's channels are saved separately
                         for idx_input_channel in range(in_channels):
-                            save.folder_layout.postfix = (
-                                basic_postfix + f"_ichan{idx_input_channel}"
-                            )  # Update the postfix to add index for channel
-                            save(attribution[0, idx_input_channel, :, :, :], meta_data=meta)
+                            # Update the postfix to add index for channel
+                            save.folder_layout.postfix = f"{out_fname_prefix}_ochan{idx_output_channel}_ichan{idx_input_channel}"
+                            save(attribution_map[0, idx_input_channel, ...], meta_data=meta)
 
-                        # We could have avoided saving the position file for each attribution method, but it's easier to associate an attribution with a position if they share the same basename.
+                        # Saving the position of the patch
+                        # We could have avoided saving the position file for each attribution method, but it's easier to associate an attribution with a position if they share the same basename.                   
+                        # We now need to include id_data
+                        id_data     = os.path.basename(x_path).split('.')[0]
+                        out_fname_prefix = f"{id_data}_{out_fname_prefix}" 
                         with open(
-                            os.path.join(shared_output_dir, output_fname_pos + ".txt"), "w"
+                            os.path.join(shared_output_dir, f"{out_fname_prefix}_pos.txt"), "w"
                         ) as f:
                             f.write(
                                 f"{pos[1,0]};{pos[1,1]}\n{pos[2,0]};{pos[2,1]}\n{pos[3,0]};{pos[3,1]}"
@@ -292,9 +318,7 @@ def main():
             #  - A single tuple, which contains #output_dims - 1 elements. This target index is applied to all examples.
             #  - A list of tuples with length equal to the number of examples in inputs (dim 0), and each tuple containing #output_dims - 1 elements.
             #     Each tuple is applied as the target for the corresponding example.
-
-            # TODO : vérifier qu'aucun padding ne soit nécessaire. Sinon il faut calculer la position en tenant compte du padding.
-            # Peut-être que le plus simple sera alors de padding non symétrique pour ne rien changer sur la position
+            # TODO : Verify that no padding is required ! Otherwise, the target position may change depending on the padding method.
             target = (
                 idx_output_channel,
                 landmark.pos[0],
@@ -303,32 +327,19 @@ def main():
             )
             logger.info(f"Relative target: {target}")
 
-            for xai_key, xai_method in xai_mapping.items():
+            attributions = compute_attribution(xai_mapping, kwargs, image=I, target=target)
 
-                stime = time.time()
-                attribution = xai_method.attribute(
-                    inputs=I, target=target, **kwargs[xai_key] # TODO : vérifier si I a besoin de la dimension batch ou non ?
-                )
-                etime = time.time()
-                logger.info(
-                    f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
-                )
+            # Out
+            id_data     = os.path.basename(x_path).split('.')[0]
+            id_model    = os.path.splitext(os.path.basename(weights_path))[0]
+            for attribution_name, attribution_map in attributions.items():
+                out_fname_prefix = f"{id_data}_{id_model}_{attribution_name}_{landmark_type}_{landmark_id}_ochan{idx_output_channel}"
 
-                logger.debug(
-                    "Attribution shape : {} | sum: {}".format(
-                        attribution.shape, torch.sum(attribution)
-                    )
-                )
-
-                # Saving the attribution of the patch
-                basic_postfix = f"{os.path.splitext(os.path.basename(weights_path))[0]}_{xai_key}_{landmark_type}_{landmark_id}_ochan{idx_output_channel}"
-
-                # Attribution channels are saved separately
+                # Attribution's channels are saved separately
                 for idx_input_channel in range(in_channels):
-                    save.folder_layout.postfix = (
-                        basic_postfix + f"_ichan{idx_input_channel}"
-                    )  # Update the postfix to add index for channel
-                    save(attribution[0, idx_input_channel, :, :, :], meta_data=meta)
+                    # Update the postfix to add index for channel
+                    save.folder_layout.postfix = f"{out_fname_prefix}_ichan{idx_input_channel}"
+                    save(attribution_map[0, idx_input_channel, ...], meta_data=meta)
 
 
 if __name__ == "__main__":
@@ -341,7 +352,7 @@ if __name__ == "__main__":
     logging.config.fileConfig(
         os.path.join(cfg.workspace, "resources", "logger.conf"),
         defaults={
-            "filename": "{}/last_attribution.log".format(cfg.log_dir),
+            "filename": f"{cfg.log_dir}/last_attribution.log",
             "datefmt": "%Y-%m-%dT%H:%M:%S",
         },
     )
