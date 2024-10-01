@@ -85,7 +85,7 @@ def parse_arguments():
         "-a",
         help="Whether or not to activate model output",
         default=False,
-        action='store_true'
+        action="store_true",
     )
 
     parser.add_argument(
@@ -108,7 +108,7 @@ def define_attribution_methods(model: torch.nn.Module) -> tuple[dict]:
     """
     Define attribution methods and associated parameters.
 
-    Available XAI methods are: 
+    Available XAI methods are:
         - IntegratedGradients
         - InputXGradient
 
@@ -157,7 +157,9 @@ def is_landmark_belonging_to_patch(landmark: CNode, patch_pos: np.ndarray) -> bo
     )
 
 
-def compute_attribution(xai_methods: dict, xai_kwargs: dict, image: MetaTensor, target: tuple) -> dict:
+def compute_attribution(
+    xai_methods: dict, xai_kwargs: dict, image: MetaTensor, target: tuple
+) -> dict:
     """
     Compute attribution maps using all XAI methods provided
 
@@ -166,9 +168,9 @@ def compute_attribution(xai_methods: dict, xai_kwargs: dict, image: MetaTensor, 
         xai_kwargs  : The associated method parameters
         image       : The image for which attribution maps are computed.
         target      : The output indices for which attribution maps are computed.
-        
+
     Returns: The dictionnary that map XAI method names with computed attribution maps.
-        
+
     """
     out = {}
 
@@ -179,9 +181,7 @@ def compute_attribution(xai_methods: dict, xai_kwargs: dict, image: MetaTensor, 
             inputs=image, target=target, **xai_kwargs[xai_key]
         )
         etime = time.time()
-        logger.info(
-            f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s"
-        )
+        logger.info(f"{xai_key}: Finished. \tEnalpsed time: {etime - stime}s")
 
         logger.debug(
             f"Attribution shape : {attribution.shape} | sum: {torch.sum(attribution)}"
@@ -198,12 +198,12 @@ def main():
     log_hardware(device)
 
     # Variables
-    model_name      = args.model
-    weights_path    = args.weights
-    activation      = args.activation
-    x_path          = args.img_path
-    graph_path      = args.graph_path
-    hyperparameters_path  = args.hyperparameters
+    model_name = args.model
+    weights_path = args.weights
+    activation = args.activation
+    x_path = args.img_path
+    graph_path = args.graph_path
+    hyperparameters_path = args.hyperparameters
 
     if args.node is not None:
         landmark_type = "node"
@@ -215,13 +215,15 @@ def main():
         landmark_type = "position"
         landmark_id = args.position
     else:
-        raise NotImplementedError("You should provide a node, acenterline or a position")
+        raise NotImplementedError(
+            "You should provide a node, a centerline or a position"
+        )
 
     # Load hyperparameters for training
     hyperparameters = load_hyperparameters(hyperparameters_path)
 
-    in_channels     = hyperparameters["in_channels"]
-    out_channels    = hyperparameters["out_channels"]
+    in_channels = hyperparameters["in_channels"]
+    out_channels = hyperparameters["out_channels"]
 
     is_patch = hyperparameters["patch"]
 
@@ -232,7 +234,9 @@ def main():
     vessel_graph = LoadVesselGraph(graph_path)
     vessel_graph = Anatomic2ImageGraph(vessel_graph, meta["original_affine"])
 
-    landmark = get_landmark_obj(graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id)
+    landmark = get_landmark_obj(
+        graph=vessel_graph, landmark_type=landmark_type, landmark_id=landmark_id
+    )
 
     # Load the trained model
     model = init_inference_model(
@@ -245,9 +249,9 @@ def main():
 
     # Activate the model output is activation has been requested
     if activation == True:
-        if out_channels==1:
+        if out_channels == 1:
             act = Sigmoid()
-        elif out_channels==2:
+        elif out_channels == 2:
             act = Softmax(dim=1)
         else:
             raise ValueError("Non-binary models are not allowed")
@@ -261,21 +265,26 @@ def main():
     save = SaveImage(
         output_dir=shared_output_dir,
         output_ext=".nii.gz",
-        output_postfix="", # Defined dynamically in the loop
+        output_postfix="",  # Defined dynamically in the loop
         resample=False,
         separate_folder=False,
         output_dtype=I.dtype,
     )
 
     if is_patch:
-        sw_shape    = [in_channels] + hyperparameters["input_shape"] # All dimensions should be specified, except batch ; see target doc.
-        sw_overlap  = [0] + [hyperparameters["patch_overlap"]] * len(hyperparameters["input_shape"])
+        # All dimensions should be specified, except batch ; see target doc.
+        sw_shape = [in_channels] + hyperparameters["input_shape"]
+        sw_overlap = [0] + [hyperparameters["patch_overlap"]] * len(
+            hyperparameters["input_shape"]
+        )
 
-        patches = iter_patch(I.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant")
+        patches = iter_patch(
+            I.numpy(), patch_size=sw_shape, overlap=sw_overlap, mode="constant"
+        )
         idx_involved_patch = 0
 
         for patch, pos in patches:
-            if is_landmark_belong_to_patch(landmark, pos) == True:
+            if is_landmark_belonging_to_patch(landmark, pos) == True:
 
                 patch = (
                     torch.from_numpy(np.expand_dims(patch, axis=0))
@@ -288,10 +297,10 @@ def main():
 
                 # Compute targeted landmark in the patch coordinate system
                 for idx_output_channel in range(out_channels):
-                # For outputs with > 2 dimensions, targets can be either:
-                #  - A single tuple, which contains #output_dims - 1 elements. This target index is applied to all examples.
-                #  - A list of tuples with length equal to the number of examples in inputs (dim 0), and each tuple containing #output_dims - 1 elements.
-                #     Each tuple is applied as the target for the corresponding example.
+                    # For outputs with > 2 dimensions, targets can be either:
+                    #  - A single tuple, which contains #output_dims - 1 elements. This target index is applied to all examples.
+                    #  - A list of tuples with length equal to the number of examples in inputs (dim 0), and each tuple containing #output_dims - 1 elements.
+                    #     Each tuple is applied as the target for the corresponding example.
                     target = (
                         idx_output_channel,
                         landmark.pos[0] - pos[1, 0],
@@ -300,34 +309,42 @@ def main():
                     )
                     logger.info(f"Relative target: {target}")
 
-                    attributions = compute_attribution(xai_mapping, kwargs, image=patch, target=target)
+                    attributions = compute_attribution(
+                        xai_mapping, kwargs, image=patch, target=target
+                    )
 
                     # Out
-                    id_model    = os.path.splitext(os.path.basename(weights_path))[0]
+                    id_model = os.path.splitext(os.path.basename(weights_path))[0]
                     for attribution_name, attribution_map in attributions.items():
                         # No need to include id_data as SaveImage automatically include it based on metadata
-                        out_fname_prefix = f"{id_model}_{attribution_name}_{landmark_type}_{landmark_id}_{idx_involved_patch}" 
+                        out_fname_prefix = f"{id_model}_{attribution_name}_{landmark_type}_{landmark_id}_{idx_involved_patch}"
 
                         # Attribution's channels are saved separately
                         for idx_input_channel in range(in_channels):
                             # Update the postfix to add index for channel
                             save.folder_layout.postfix = f"{out_fname_prefix}_ochan{idx_output_channel}_ichan{idx_input_channel}"
-                            save(attribution_map[0, idx_input_channel, ...], meta_data=meta)
+                            save(
+                                attribution_map[0, idx_input_channel, ...],
+                                meta_data=meta,
+                            )
 
                         # Saving the position of the patch
-                        # We could have avoided saving the position file for each attribution method, but it's easier to associate an attribution with a position if they share the same basename.                   
+                        # We could have avoided saving the position file for each attribution method, but it's easier to associate an attribution with a position if they share the same basename.
                         # We now need to include id_data
-                        id_data     = os.path.basename(x_path).split('.')[0]
-                        out_fname_prefix = f"{id_data}_{out_fname_prefix}" 
+                        id_data = os.path.basename(x_path).split(".")[0]
+                        out_fname_prefix = f"{id_data}_{out_fname_prefix}"
                         with open(
-                            os.path.join(shared_output_dir, f"{out_fname_prefix}_pos.txt"), "w"
+                            os.path.join(
+                                shared_output_dir, f"{out_fname_prefix}_pos.txt"
+                            ),
+                            "w",
                         ) as f:
                             f.write(
                                 f"{pos[1,0]};{pos[1,1]}\n{pos[2,0]};{pos[2,1]}\n{pos[3,0]};{pos[3,1]}"
                             )
 
                 idx_involved_patch += 1
-    
+
     else:
         # Add the batch dimension
         I = torch.unsqueeze(I, dim=0)
@@ -346,18 +363,22 @@ def main():
             )
             logger.info(f"Relative target: {target}")
 
-            attributions = compute_attribution(xai_mapping, kwargs, image=I, target=target)
+            attributions = compute_attribution(
+                xai_mapping, kwargs, image=I, target=target
+            )
 
             # Out
-            id_data     = os.path.basename(x_path).split('.')[0]
-            id_model    = os.path.splitext(os.path.basename(weights_path))[0]
+            id_data = os.path.basename(x_path).split(".")[0]
+            id_model = os.path.splitext(os.path.basename(weights_path))[0]
             for attribution_name, attribution_map in attributions.items():
                 out_fname_prefix = f"{id_data}_{id_model}_{attribution_name}_{landmark_type}_{landmark_id}_ochan{idx_output_channel}"
 
                 # Attribution's channels are saved separately
                 for idx_input_channel in range(in_channels):
                     # Update the postfix to add index for channel
-                    save.folder_layout.postfix = f"{out_fname_prefix}_ichan{idx_input_channel}"
+                    save.folder_layout.postfix = (
+                        f"{out_fname_prefix}_ichan{idx_input_channel}"
+                    )
                     save(attribution_map[0, idx_input_channel, ...], meta_data=meta)
 
 
