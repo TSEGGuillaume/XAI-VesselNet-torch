@@ -79,6 +79,14 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--activation",
+        "-a",
+        help="Whether or not to activate model output",
+        default=False,
+        action='store_true'
+    )
+
+    parser.add_argument(
         "--hyperparameters",
         "-p",
         type=str,
@@ -91,8 +99,7 @@ def parse_arguments():
 
     parser.add_argument("--verbose", "-v", action="count", default=0)
 
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
 
 def main():
@@ -103,6 +110,7 @@ def main():
     # Variables
     model_name      = args.model
     weights_path    = args.weights
+    activation      = args.activation
     x_path          = args.img_path
     graph_path      = args.graph_path
     hyperparameters_path  = args.hyperparameters
@@ -145,14 +153,14 @@ def main():
         device=device,
     )
 
-    # I'm not convinced we should activate the logit, but if we don't, are we back to the single-channel problem? 
-    if out_channels==1:
-        act = Sigmoid()
-    elif out_channels==2:
-        act = Softmax(dim=1)
-    else:
-        raise ValueError("Non-binary models are not allowed")
-    model = Sequential(model, act)
+    if activation == True:
+        if out_channels==1:
+            act = Sigmoid()
+        elif out_channels==2:
+            act = Softmax(dim=1)
+        else:
+            raise ValueError("Non-binary models are not allowed")
+        model = Sequential(model, act)
 
     # Explanation methods
     mapping = {
