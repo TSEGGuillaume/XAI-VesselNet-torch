@@ -313,6 +313,9 @@ def main():
                 idx_involved_patch += 1
     
     else:
+        # Add the batch dimension
+        I = torch.unsqueeze(I, dim=0)
+
         for idx_output_channel in range(out_channels):
             # For outputs with > 2 dimensions, targets can be either:
             #  - A single tuple, which contains #output_dims - 1 elements. This target index is applied to all examples.
