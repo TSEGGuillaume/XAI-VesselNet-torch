@@ -14,6 +14,7 @@ from monai.data.utils import iter_patch
 from captum.attr import IntegratedGradients, InputXGradient
 
 import models.instanciate_model
+from graph.graph import CNode
 from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVesselGraph
 from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph
 from utils.load_hyperparameters import load_hyperparameters
@@ -135,6 +136,27 @@ def define_attribution_methods(model: torch.nn.Module) -> tuple[dict]:
     return mapping, kwargs
 
 
+def is_landmark_belonging_to_patch(landmark: CNode, patch_pos: np.ndarray) -> bool:
+    """
+    Verify if a landmark belongs to a patch
+
+    Args:
+        landmark    : The landmark
+        patch_pos   : The patch positions
+
+    Returns:
+        True if the landmark belongs to the patch, False otherwise.
+    """
+    return (
+        landmark.pos[0] >= patch_pos[1, 0]
+        and landmark.pos[0] < patch_pos[1, 1]
+        and landmark.pos[1] >= patch_pos[2, 0]
+        and landmark.pos[1] < patch_pos[2, 1]
+        and landmark.pos[2] >= patch_pos[3, 0]
+        and landmark.pos[2] < patch_pos[3, 1]
+    )
+
+
 def compute_attribution(xai_methods: dict, xai_kwargs: dict, image: MetaTensor, target: tuple) -> dict:
     """
     Compute attribution maps using all XAI methods provided
@@ -253,14 +275,8 @@ def main():
         idx_involved_patch = 0
 
         for patch, pos in patches:
-            if (
-                landmark.pos[0] >= pos[1, 0]
-                and landmark.pos[0] < pos[1, 1]
-                and landmark.pos[1] >= pos[2, 0]
-                and landmark.pos[1] < pos[2, 1]
-                and landmark.pos[2] >= pos[3, 0]
-                and landmark.pos[2] < pos[3, 1]
-            ):
+            if is_landmark_belong_to_patch(landmark, pos) == True:
+
                 patch = (
                     torch.from_numpy(np.expand_dims(patch, axis=0))
                     .type(torch.FloatTensor)
