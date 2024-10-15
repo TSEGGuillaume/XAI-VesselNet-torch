@@ -90,9 +90,10 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
         logger.debug("No blob detected, returns empty region properties.")
     else:
         for lbl_idx in range(1, nlabels + 1):
-            logger.debug(f" - Blob {lbl_idx}: {np.sum(labeled_blobs==lbl_idx)}")
 
             current_blob = (labeled_blobs == lbl_idx).astype(np.ubyte)
+
+            logger.debug(f" - Blob {lbl_idx}: {np.sum(current_blob)}")
 
             try:
                 current_props = regionprops_table(
