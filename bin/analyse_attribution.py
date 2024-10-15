@@ -156,7 +156,7 @@ def convert_typing_to_native(data) -> dict:
         return convert_typing_to_native(list(data))
 
     elif isinstance(data, torch.Tensor):
-        return convert_typing_to_native(data.item()) if len(data)==1 else convert_typing_to_native(data.cpu().numpy().tolist())
+        return convert_typing_to_native(data.item()) if data.numel()==1 else convert_typing_to_native(data.cpu().numpy().tolist())
 
     elif isinstance(data, np.ndarray):
         return convert_typing_to_native(data.item()) if len(data)==1 else convert_typing_to_native(data.tolist())
