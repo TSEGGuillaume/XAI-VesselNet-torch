@@ -99,9 +99,13 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
     if nlabels == 0:
         logger.debug("No blob detected, returns empty region properties.")
     else:
-        for lbl_idx in range(1, nlabels + 1):
+        for lbl_idx in range(nlabels + 1):
 
-            current_blob = (labeled_blobs == lbl_idx).astype(np.ubyte)
+            current_blob = (labeled_blobs == lbl_idx).astype(int)
+
+            # 0 is a "no blob region"
+            if lbl_idx != 0:
+                current_blob = current_blob * lbl_idx
 
             logger.debug(f" - Blob {lbl_idx}: {np.sum(current_blob)}")
 
@@ -117,6 +121,12 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
                 current_props = [
                     dict(zip(current_props, t)) for t in zip(*current_props.values())
                 ]  # Change the dict of list to list of dict
+                
+                if lbl_idx == 0:
+                    # "Blob" background
+                    current_props[-1]["label"] = lbl_idx
+                    current_props[-1]["background"] = True
+
                 props += current_props
 
             except ValueError as e:
@@ -141,6 +151,7 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
                         current_blob, properties=corrected_props
                     )
 
+
                     current_props = [
                         dict(zip(current_props, t))
                         for t in zip(*current_props.values())
@@ -148,6 +159,11 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
 
                     for elem in intersect:
                         current_props[-1][elem] = -1.0
+
+                    if lbl_idx == 0:
+                        # "Blob" background
+                        current_props[-1]["label"] = lbl_idx
+                        current_props[-1]["background"] = True
 
                     props += current_props
 
