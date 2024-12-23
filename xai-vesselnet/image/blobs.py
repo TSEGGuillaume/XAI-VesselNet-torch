@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from numpy import ndarray
 
-from skimage.filters import frangi, threshold_otsu
+from skimage.filters import frangi, threshold_otsu, threshold_li, threshold_yen
 from skimage.measure import label, regionprops_table
 
 
@@ -15,7 +15,7 @@ def detect_blob(
     sigma_min: float = 2.0,
     sigma_max: float = 16.0,
     N_sigma: int = 14,
-    threshold: float = None,
+    threshold: str|float = None,
 ) -> ndarray:
     """
     Search for blobs in an image.
@@ -40,7 +40,7 @@ def detect_blob(
         )
     )
 
-    frangi_beta = 0.5  # Sensitivity to deviation from a blob-like structure
+    frangi_beta = 0.75  # Sensitivity to deviation from a blob-like structure
     frangi_alpha = (
         1 - frangi_beta
     )  # Sensitivity to deviation from a plate-like structure
@@ -59,9 +59,19 @@ def detect_blob(
     )
 
     if threshold == None:
+        return I_blob
         # The choice of nbins is debatable, but we chose nbins=256 because our intuition about blob detection was initiated by visual observations of attribution maps,
-        # i.e. on intensity-scaled grayscale images of 256 intensity values.
-        threshold = threshold_otsu(image=I_blob, nbins=256)
+    elif isinstance(threshold, str):
+        if threshold == "otsu":
+            # The choice of nbins is debatable, but we chose nbins=256 because our intuition about blob detection was initiated by visual observations of attribution maps,
+            # i.e. on intensity-scaled grayscale images of 256 intensity values.
+            threshold = threshold_otsu(image=I_blob, nbins=256)
+        elif threshold == "li":
+            threshold = threshold_li(image=I_blob)
+        elif threshold == "yen":
+            threshold = threshold_yen(image=I_blob, nbins=256)
+        else:
+            raise NotImplementedError(f"{threshold} thresholding if not available.")
 
     I_blob = (I_blob > threshold).astype(np.ubyte)
 
@@ -89,9 +99,13 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
     if nlabels == 0:
         logger.debug("No blob detected, returns empty region properties.")
     else:
-        for lbl_idx in range(1, nlabels + 1):
+        for lbl_idx in range(nlabels + 1):
 
-            current_blob = (labeled_blobs == lbl_idx).astype(np.ubyte)
+            current_blob = (labeled_blobs == lbl_idx).astype(int)
+
+            # 0 is a "no blob region"
+            if lbl_idx != 0:
+                current_blob = current_blob * lbl_idx
 
             logger.debug(f" - Blob {lbl_idx}: {np.sum(current_blob)}")
 
@@ -107,6 +121,12 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
                 current_props = [
                     dict(zip(current_props, t)) for t in zip(*current_props.values())
                 ]  # Change the dict of list to list of dict
+                
+                if lbl_idx == 0:
+                    # "Blob" background
+                    current_props[-1]["label"] = lbl_idx
+                    current_props[-1]["background"] = True
+
                 props += current_props
 
             except ValueError as e:
@@ -131,6 +151,7 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
                         current_blob, properties=corrected_props
                     )
 
+
                     current_props = [
                         dict(zip(current_props, t))
                         for t in zip(*current_props.values())
@@ -138,6 +159,11 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
 
                     for elem in intersect:
                         current_props[-1][elem] = -1.0
+
+                    if lbl_idx == 0:
+                        # "Blob" background
+                        current_props[-1]["label"] = lbl_idx
+                        current_props[-1]["background"] = True
 
                     props += current_props
 
