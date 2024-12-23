@@ -12,7 +12,7 @@ from monai.data.meta_tensor import MetaTensor
 from monai.transforms import LoadImage, SaveImage
 from monai.data.utils import iter_patch
 
-from captum.attr import IntegratedGradients, InputXGradient
+from captum.attr import IntegratedGradients, Saliency, InputXGradient
 
 import models.instanciate_model
 from graph.graph import CNode
@@ -120,6 +120,7 @@ def define_attribution_methods(model: torch.nn.Module) -> tuple[dict]:
     Available XAI methods are:
         - IntegratedGradients
         - InputXGradient
+        - Saliency (gradient only)
 
     Args:
         model : The trained model to explain
@@ -129,6 +130,7 @@ def define_attribution_methods(model: torch.nn.Module) -> tuple[dict]:
     """
     mapping = {
         "IntegratedGradients": IntegratedGradients(model),
+        "Saliency": Saliency(model),
         "InputXGradient": InputXGradient(model),
     }
     kwargs = {
@@ -136,6 +138,9 @@ def define_attribution_methods(model: torch.nn.Module) -> tuple[dict]:
         "IntegratedGradients": {
             "baselines": None,  # use zero scalar corresponding to each input tensor
             "n_steps": 100,
+        },
+        "Saliency": {
+            "abs": False,
         },
         "InputXGradient": {
             # No more parameters than input and target. See attribute()
@@ -226,8 +231,24 @@ def main():
         landmark_ids = [args.position]
     elif args.list is not None:
         df = pd.read_csv(args.list, delimiter=";", header=None)
-        landmark_types = df.iloc[:, 0]
-        landmark_ids = df.iloc[:, 1]
+
+        landmark_type_idx = 0
+
+        landmark_types = df.iloc[:, landmark_type_idx].values.tolist()
+        landmark_ids = []
+
+        # Process landmark type separately ; behavior change between node|centerline (1 ID) and position (3D spatial location)
+        grouped_df = df.groupby(by=landmark_type_idx)
+
+        for group_type_ldmrk, group_ldmrk in grouped_df:
+            logger.debug(f"Landmark type: {group_type_ldmrk}: {len(group_ldmrk)} landmarks")
+            
+            if group_type_ldmrk in ["node", "centerline"]:
+                landmark_ids += group_ldmrk.iloc[:, 1].values.tolist()
+            elif group_type_ldmrk == "position":
+                landmark_ids += list(group_ldmrk.iloc[:,1:].astype(int).itertuples(index=False, name=None))
+            else:
+                raise ValueError(f"Landmark type {group_type_ldmrk} is not supported")
     else:
         raise NotImplementedError(
             "You should provide a node, a centerline or a position"
