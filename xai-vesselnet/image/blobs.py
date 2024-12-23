@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from numpy import ndarray
 
-from skimage.filters import frangi, threshold_otsu
+from skimage.filters import frangi, threshold_otsu, threshold_li, threshold_yen
 from skimage.measure import label, regionprops_table
 
 
@@ -15,7 +15,7 @@ def detect_blob(
     sigma_min: float = 2.0,
     sigma_max: float = 16.0,
     N_sigma: int = 14,
-    threshold: float = None,
+    threshold: str|float = None,
 ) -> ndarray:
     """
     Search for blobs in an image.
@@ -59,9 +59,19 @@ def detect_blob(
     )
 
     if threshold == None:
+        return I_blob
         # The choice of nbins is debatable, but we chose nbins=256 because our intuition about blob detection was initiated by visual observations of attribution maps,
-        # i.e. on intensity-scaled grayscale images of 256 intensity values.
-        threshold = threshold_otsu(image=I_blob, nbins=256)
+    elif isinstance(threshold, str):
+        if threshold == "otsu":
+            # The choice of nbins is debatable, but we chose nbins=256 because our intuition about blob detection was initiated by visual observations of attribution maps,
+            # i.e. on intensity-scaled grayscale images of 256 intensity values.
+            threshold = threshold_otsu(image=I_blob, nbins=256)
+        elif threshold == "li":
+            threshold = threshold_li(image=I_blob)
+        elif threshold == "yen":
+            threshold = threshold_yen(image=I_blob, nbins=256)
+        else:
+            raise NotImplementedError(f"{threshold} thresholding if not available.")
 
     I_blob = (I_blob > threshold).astype(np.ubyte)
 
