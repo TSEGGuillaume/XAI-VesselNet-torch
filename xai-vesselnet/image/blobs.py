@@ -40,7 +40,7 @@ def detect_blob(
         )
     )
 
-    frangi_beta = 0.5  # Sensitivity to deviation from a blob-like structure
+    frangi_beta = 0.75  # Sensitivity to deviation from a blob-like structure
     frangi_alpha = (
         1 - frangi_beta
     )  # Sensitivity to deviation from a plate-like structure
