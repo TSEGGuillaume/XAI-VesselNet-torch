@@ -20,6 +20,9 @@ from utils.load_patch_position import read_path_position_from_file
 from graph.graph import CGraph, CNode
 
 
+logger = logging.getLogger("app")
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser()
 
@@ -54,21 +57,21 @@ def parse_arguments():
     return args
 
 
-def create_mask_bifurcation(
+def create_mask_node(
     I: MetaTensor | ndarray, landmark: CNode, threshold: float = 0.75
 ) -> ndarray:
     """
-    Create the mask of a given bifurcation
+    Create the mask of a given node
 
     Args:
         I           : The vessel mask (H,W,[D]).
-        landmark    : The instance of the corresponding bifurcation node.
+        landmark    : The instance of the corresponding node.
         threshold   : The dilation stop condition. The dilation process is automatically stopped when the number of new background voxels exceeds a proportion of the new vessel voxels count (threshold).
 
     Note: if the dilation stop condition is never reached, it stops when the structuring element reaches its asbolted size limit. See SE_radii range
 
     Returns:
-        The bifurcation mask
+        The node mask
     """
 
     SE_radii = range(2, 10, 1)
@@ -145,16 +148,15 @@ def compute_relative_degree(
         patch_pos   : The [ (start, ), (end, ) ] coordinate of the patch
         save        : The SaveImage object or a tuple (SaveImage, metadata) to save intermediate results. `None` as default : will not save intermediate results.
 
-
     Returns:
         The relative degree of a landmark
     """
 
-    bifurcation = graph.nodes[id_landmark]
+    node = graph.nodes[id_landmark]
 
-    logger.info(f"Compute relative degree for {bifurcation} in patch {patch_pos}")
+    logger.info(f"Compute relative degree for {node} in patch {patch_pos}")
 
-    # Get the bifurcation mask
+    # Get the node mask
     # \ . . . _ . . . /
     # . \ . / . \ . / .
     # . . / . . . \ . .
@@ -162,7 +164,7 @@ def compute_relative_degree(
     # . . \ . O . / . .
     # . . . \ _ / . . .
     # . . . . | . . . .
-    M_bif = create_mask_bifurcation(y_true, bifurcation)
+    M_bif = create_mask_node(y_true, node)
     not_M_bif = M_bif == 0  # Exclude the masked zone.
 
     # Create the centerlines image -> draw all centerlines connected to the landmark
@@ -178,12 +180,14 @@ def compute_relative_degree(
     for connection in [
         cnx
         for cnx in graph.connections.values()
-        if cnx.node1._id == bifurcation._id or cnx.node2._id == bifurcation._id
+        if cnx.node1._id == node._id or cnx.node2._id == node._id
     ]:
         for skvx in connection.skeleton_points:
             I_skel[skvx["pos"]] = 1
 
-    # Disconnect the centerlines by removing the interconnection, depicted by our bifurcation mask
+    # TODO : Delete all voxel of the skeleton that will not be directly connected to the landmark in the patch
+
+    # Disconnect the centerlines by removing the interconnection, depicted by our node mask
     # \ . . . . . . . /
     # . \ . . . . . / .
     # . . . . . . . . .
@@ -200,10 +204,15 @@ def compute_relative_degree(
         patch_pos[0][2] : patch_pos[1][2],
     ]
 
-    # Labelize the patch : the number of labels = number of remaining disconnected centerlines in the patch, e.g. the patch includes the entire bifurcation
-    _, relative_degree = label(I_skel_patch, connectivity=None, return_num=True)
+    # Labelize the patch : the number of labels = number of remaining disconnected centerlines in the patch, e.g. the patch includes the entire node structure
+    # It's supposed to be impossible to obtain greater relative degree than absolute degree. In this case (vessel that goes out and comes back in the patch is counted twice), we take away relative degree to absolute degree.
+    # This way we consider this out/in vessel as an isolate bright spot
+    relative_degree = min(
+        node.degree,
+        label(I_skel_patch, connectivity=None, return_num=True)[1]
+    )
 
-    logger.info(f"Degree : {bifurcation.degree} -> {relative_degree}")
+    logger.info(f"Degree : {node.degree} -> {relative_degree}")
 
     if save is not None:
 
@@ -218,7 +227,7 @@ def compute_relative_degree(
         #     os.mkdir(saver.folder_layout.output_dir)
 
         # Image scale
-        saver.folder_layout.postfix = f"mask_biff_{id_landmark}"
+        saver.folder_layout.postfix = f"mask_{node}_{id_landmark}"
         saver(np.expand_dims(M_bif, axis=0), meta_data=meta_data)
         saver.folder_layout.postfix = f"skel_biff_{id_landmark}"
         saver(np.expand_dims(I_skel, axis=0), meta_data=meta_data)
