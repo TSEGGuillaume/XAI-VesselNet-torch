@@ -66,9 +66,9 @@ def create_mask_node(
     Args:
         I           : The vessel mask (H,W,[D]).
         landmark    : The instance of the corresponding node.
-        threshold   : The dilation stop condition. The dilation process is automatically stopped when the number of new background voxels exceeds a proportion of the new vessel voxels count (threshold).
+        threshold   : The dilation stop condition. The dilation process is automatically stopped when the number of new background voxels exceeds a proportion of the new vessel voxels count (threshold). Default set to 0.75.
 
-    Note: if the dilation stop condition is never reached, it stops when the structuring element reaches its asbolted size limit. See SE_radii range
+    Note: if the dilation stop condition is never reached, it stops when the structuring element reaches its absolute size limit. See SE_radii range
 
     Returns:
         The node mask
@@ -139,7 +139,7 @@ def compute_relative_degree(
     save: SaveImage | tuple[SaveImage | dict] = None,
 ) -> int:
     """
-    Compute the relative connectivity of a landmark given a specific patch
+    Compute the relative connectivity of a landmark in a specific patch
 
     Args:
         id_landmark : The id of the landmark.
@@ -177,6 +177,7 @@ def compute_relative_degree(
     # . . . . | . . . .
     I_skel = np.zeros_like(M_bif)
 
+    # Find associated connections and draw the skeleton
     for connection in [
         cnx
         for cnx in graph.connections.values()
@@ -185,7 +186,7 @@ def compute_relative_degree(
         for skvx in connection.skeleton_points:
             I_skel[skvx["pos"]] = 1
 
-    # TODO : Delete all voxel of the skeleton that will not be directly connected to the landmark in the patch
+    # TODO : Delete all voxels of the skeleton that will not be directly connected to the landmark in the patch
 
     # Disconnect the centerlines by removing the interconnection, depicted by our node mask
     # \ . . . . . . . /
@@ -205,8 +206,8 @@ def compute_relative_degree(
     ]
 
     # Labelize the patch : the number of labels = number of remaining disconnected centerlines in the patch, e.g. the patch includes the entire node structure
-    # It's supposed to be impossible to obtain greater relative degree than absolute degree. In this case (vessel that goes out and comes back in the patch is counted twice), we take away relative degree to absolute degree.
-    # This way we consider this out/in vessel as an isolate bright spot
+    # It should not be be possible to obtain greater relative degree than absolute degree. In this case (vessel that goes out and comes back in the patch is counted twice), we take away relative degree to absolute degree.
+    # Hence we consider this out/in vessel as an isolated bright spot
     relative_degree = min(
         node.degree,
         label(I_skel_patch, connectivity=None, return_num=True)[1]
