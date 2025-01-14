@@ -10,25 +10,79 @@ from skimage.measure import label, regionprops_table
 logger = logging.getLogger("app")
 
 
-def detect_blob(
+def detect_blobs(
     I: ndarray,
-    sigma_min: float = 2.0,
-    sigma_max: float = 16.0,
-    N_sigma: int = 14,
+    sigmas: list[float],
+    alpha: float,
+    beta: float,
+    black_ridges: bool = False,
     threshold: str|float = None,
 ) -> ndarray:
     """
     Search for blobs in an image.
     We use Frangi's algorithm to produce a blobness-filtered image, followed by a threshold that output a binary blobs mask.
+    
+    Args:
+        I           : The image (H,W,[D]).
+        sigmas      : The Gaussian scale-space.
+        alpha       : Frangi correction constant that adjusts the filter’s sensitivity to deviation from a plate-like structure.
+        beta        : Frangi correction constant that adjusts the filter’s sensitivity to deviation from a blob-like structure.
+        black_ridges: When True (the default), the filter detects black ridges; when False, it detects white ridges.
+        threshold   : The blobness threshold value. If `None` (default), no threshold is applied.
+
+    Returns:
+        blobs (ndarray) : The blobs mask.
+    """
+    I_blobs = frangi(
+        I,
+        sigmas=sigmas,
+        alpha=alpha,
+        beta=beta,
+        black_ridges=black_ridges,
+        mode="constant",
+        cval=0,
+    )
+
+    if threshold == None:
+        return I_blobs
+
+    elif isinstance(threshold, str):
+        if threshold == "otsu":
+            # The choice of nbins is debatable, but we chose nbins=256 because our intuition about blob detection was initiated by visual observations of attribution maps,
+            # i.e. on intensity-scaled grayscale images of 256 intensity values.
+            threshold = threshold_otsu(image=I_blobs, nbins=256)
+        elif threshold == "li":
+            threshold = threshold_li(image=I_blobs)
+        elif threshold == "yen":
+            threshold = threshold_yen(image=I_blobs, nbins=256)
+        else:
+            raise NotImplementedError(f"{threshold} thresholding if not available.")
+
+    I_blobs = (I_blobs > threshold).astype(np.ubyte)
+
+    return I_blobs
+
+
+def detect_bright_and_dark_blobs(
+    I: ndarray,
+    sigma_min: float = 1.0,
+    sigma_max: float = 6.0,
+    N_sigma: int = 5,
+    threshold: str|float = None,
+) -> ndarray:
+    """
+    Search for bright and dark blobs in an image.
+    We use Frangi's algorithm to produce a blobness-filtered image, followed by a threshold that outputs a binary blobs mask.
+    This function detects both bright and dark blobs by filtering the absolute intensity of the image rather than searching for black and white ridges separately.
 
     Args:
         I           : The image (H,W,[D]).
-        sigma_min   : The minimum deviation for Gaussian scale-space. 2.0 by default.
-        sigma_max   : The maximum deviation for Gaussian scale-space. 16.0 by default.
-        N_sigma     : The number of sigmas to use between [sigma_min, sigma_max]. 14 by default.
-        threshold   : The blobness threshold value. If `None` (default), Otsu will be used.
+        sigma_min   : The minimum deviation for Gaussian scale-space. 1.0 by default.
+        sigma_max   : The maximum deviation for Gaussian scale-space. 6.0 by default.
+        N_sigma     : The number of sigmas to use between [sigma_min, sigma_max[. 5 by default.
+        threshold   : The blobness threshold value. If `None` (default), no threshold is applied and Frangi's output is returned.
 
-    Note: sigma_min and sigma_max are included in the sigmas.
+    Note: sigma_min and sigma_max are included in the sigmas. Hence, we have (N_sigma+1) scales.
 
     Returns:
         blobs (ndarray) : The blobs mask.
@@ -40,57 +94,69 @@ def detect_blob(
         )
     )
 
-    frangi_beta = 0.75  # Sensitivity to deviation from a blob-like structure
+    frangi_beta = 0.5  # Sensitivity to deviation from a blob-like structure
     frangi_alpha = (
-        1 - frangi_beta
+        0.5
     )  # Sensitivity to deviation from a plate-like structure
     final_sigma_max = (
         sigma_max + sigma_step
     )  # To include the provided sigma_max value in the scale-space
 
-    I_blob = frangi(
+    I = np.abs(I)  # No need to discriminate bright and dark blobs ; we use absolute values
+
+    I_blobs = detect_blobs(
         I,
         sigmas=np.arange(sigma_min, final_sigma_max, sigma_step),
         alpha=frangi_alpha,
         beta=frangi_beta,
         black_ridges=False,
-        mode="constant",
-        cval=0,
-    )
+        threshold=threshold,
+    ).astype(np.ubyte)
 
-    if threshold == None:
-        return I_blob
-        # The choice of nbins is debatable, but we chose nbins=256 because our intuition about blob detection was initiated by visual observations of attribution maps,
-    elif isinstance(threshold, str):
-        if threshold == "otsu":
-            # The choice of nbins is debatable, but we chose nbins=256 because our intuition about blob detection was initiated by visual observations of attribution maps,
-            # i.e. on intensity-scaled grayscale images of 256 intensity values.
-            threshold = threshold_otsu(image=I_blob, nbins=256)
-        elif threshold == "li":
-            threshold = threshold_li(image=I_blob)
-        elif threshold == "yen":
-            threshold = threshold_yen(image=I_blob, nbins=256)
-        else:
-            raise NotImplementedError(f"{threshold} thresholding if not available.")
+    # I_blobs_bright = detect_blobs(
+    #     I,
+    #     sigmas=np.arange(sigma_min, final_sigma_max, sigma_step),
+    #     alpha=frangi_alpha,
+    #     beta=frangi_beta,
+    #     black_ridges=False,
+    #     threshold=threshold,
+    # )
+    # I_blobs_dark = detect_blobs(
+    #     I,
+    #     sigmas=np.arange(sigma_min, final_sigma_max, sigma_step),
+    #     alpha=frangi_alpha,
+    #     beta=frangi_beta,
+    #     black_ridges=True,
+    #     threshold=threshold,
+    # )
 
-    I_blob = (I_blob > threshold).astype(np.ubyte)
+    # I_blobs = np.logical_or(I_blobs_bright, I_blobs_dark).astype(np.ubyte)
 
-    return I_blob
+    return I_blobs
 
 
-def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
+def compute_blobs_properties(
+    I: ndarray,
+    selected_props: list[str],
+    is_labeled:bool = False
+) -> list:
     """
-    Labelized an image and measure various selected properties of the connected components.
+    Measure specified properties of connected components in a labeled image
     See https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops
 
     Args:
-        I : The image (H,W,[D])
-        selected_props  : The properties to compute for each labeled blob
+        I             : The image (H,W,[D])
+        selected_props: The properties to compute for each labeled blob
+        is_labeled    : Indicate if I is already labeled. If False, the function will labelize the image.
 
     Returns:
-        props (list) : The list of RegionProperties
+        props (list[dict]) : The list of RegionProperties
     """
-    labeled_blobs, nlabels = label(I, connectivity=None, return_num=True)
+    if not is_labeled:
+        labeled_blobs, nlabels = label(I, connectivity=None, return_num=True)
+    else:
+        labeled_blobs = I.astype(int)
+        nlabels = np.max(labeled_blobs)
 
     logger.info(f"{nlabels} blobs detected")
 
@@ -98,37 +164,38 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
 
     if nlabels == 0:
         logger.debug("No blob detected, returns empty region properties.")
+
     else:
+        # For what remains an obscure reason, the program raises exception when calculating the properties of some blobs (see except clause.)
+        # This causes the function to fail for all blobs because a single blob has triggered the exception.
+        # WORK AROUND: we iterate each blob by hand. Blob crashes no longer leads to full failure.
+        #
+        # We also add the background (label 0) to the list of blobs to iterate over.
         for lbl_idx in range(nlabels + 1):
 
             current_blob = (labeled_blobs == lbl_idx).astype(int)
 
-            # 0 is a "no blob region"
+            # 0 is the background
             if lbl_idx != 0:
                 current_blob = current_blob * lbl_idx
 
             logger.debug(f" - Blob {lbl_idx}: {np.sum(current_blob)}")
 
             try:
+                # Causes exceptions for some small blobs (or flat simplex ?) during convex hull calculation.
+                # Except is then executed, recalling regionprops_table without props related to convex hull 
                 current_props = regionprops_table(
                     current_blob, properties=selected_props
                 )
 
-                # We use `regionprops_table` instead of `regionprops` because `regionprops_table` is executed when called, while `regionprops` is executed when indexed, causing exceptions for some small blobs (or flat simplex ?) during convex hull calculation.
                 # `regionprops_table` returns a dictionary of lists, where keys are the props and values are the corresponding property values for each blob.
-                # To match the output of `regionprops`, we convert the dictionary of lists to a list of dictionaries #### TODO and perform some post-processing, such as merging d["k-0"], d["k-1"], and d["k-2"] into d[k] = (d["k-0"], d["k-1"], d["k-2"])."
-
+                # To match the output of `regionprops`, we convert the dictionary of lists to a list of dictionaries 
+                # TODO: post-processing non-scalar props, such as d["k-0"], d["k-1"], d["k-2"] into d[k] = (d["k-0"], d["k-1"], d["k-2"])."
+                
                 current_props = [
                     dict(zip(current_props, t)) for t in zip(*current_props.values())
                 ]  # Change the dict of list to list of dict
                 
-                if lbl_idx == 0:
-                    # "Blob" background
-                    current_props[-1]["label"] = lbl_idx
-                    current_props[-1]["background"] = True
-
-                props += current_props
-
             except ValueError as e:
 
                 # Assume the problem came from the convex hull
@@ -151,20 +218,20 @@ def compute_blobs_properties(I: ndarray, selected_props: list[str]) -> list:
                         current_blob, properties=corrected_props
                     )
 
-
                     current_props = [
-                        dict(zip(current_props, t))
-                        for t in zip(*current_props.values())
+                        dict(zip(current_props, t)) for t in zip(*current_props.values())
                     ]  # Change the dict of list to list of dict
 
                     for elem in intersect:
                         current_props[-1][elem] = -1.0
 
-                    if lbl_idx == 0:
-                        # "Blob" background
-                        current_props[-1]["label"] = lbl_idx
-                        current_props[-1]["background"] = True
+            # If background "blob"
+            if lbl_idx == 0:
+                current_props[-1]["label"] = lbl_idx # Fix de label
+                current_props[-1]["background"] = True # Specify background
+            else:
+                current_props[-1]["background"] = False 
 
-                    props += current_props
+            props += current_props
 
     return props, labeled_blobs, nlabels

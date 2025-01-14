@@ -34,7 +34,7 @@ from utils.load_patch_position import read_path_position_from_file
 from network.model_creator import init_inference_model
 from utils.prebuilt_logs import log_hardware
 from image.vessel_thickness import compute_vessel_thickness
-from image.blobs import detect_blob, compute_blobs_properties
+from image.blobs import detect_bright_and_dark_blobs, compute_blobs_properties
 from utils.distances import distance
 from metrics.total_variation import image_total_variation
 from metrics.descriptive_statistics import univariate_analysis
@@ -421,7 +421,7 @@ def main():
     # Detect the blobs in the attribution map and compute blobs' region properties
     logger.info("Blob search...")
     blobs_mask = remove_small_objects(
-        detect_blob(I_attribution).astype(bool), min_size=5
+        detect_bright_and_dark_blobs(I_attribution).astype(bool), min_size=5
     )  # For regionprops that requiere convex hull, we remove objects smaller that 4px
 
     selected_props = [
