@@ -138,7 +138,8 @@ def detect_bright_and_dark_blobs(
 def compute_blobs_properties(
     I: ndarray,
     selected_props: list[str],
-    is_labeled:bool = False
+    is_labeled:bool = False,
+    include_background:bool = False
 ) -> list:
     """
     Measure specified properties of connected components in a labeled image
@@ -171,7 +172,12 @@ def compute_blobs_properties(
         # WORK AROUND: we iterate each blob by hand. Blob crashes no longer leads to full failure.
         #
         # We also add the background (label 0) to the list of blobs to iterate over.
-        for lbl_idx in range(nlabels + 1):
+        if include_background:
+            start_label_idx = 0
+        else:
+            start_label_idx = 1
+
+        for lbl_idx in range(start_label_idx, nlabels + 1):
 
             current_blob = (labeled_blobs == lbl_idx).astype(int)
 
