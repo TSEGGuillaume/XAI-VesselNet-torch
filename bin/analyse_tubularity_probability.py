@@ -84,6 +84,7 @@ def task_compute_tubularity_prob(files, in_path_filters, in_path_graphs, out_pat
 
             decomp_fname = file.split("_")
 
+            prefix_fname = "_".join(decomp_fname[:-2])
             sample_id = "_".join(decomp_fname[:2])
             landmark_type = decomp_fname[6]
             landmark_id = decomp_fname[7]
@@ -104,7 +105,7 @@ def task_compute_tubularity_prob(files, in_path_filters, in_path_graphs, out_pat
 
             vesselness_value = I[landmark.pos]
 
-            json_path = os.path.join(out_path, "tubularity_{}.json".format(file.split(".")[0]))
+            json_path = os.path.join(out_path, "{}_tubularity.json".format(prefix_fname))
             
             if os.path.isfile(json_path):
                 # UPDATE
