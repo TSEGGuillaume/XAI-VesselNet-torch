@@ -182,7 +182,8 @@ def main(attribution_dir, input_dir, graph_dir, model_name, weights_dir, hyperpa
     out_channels = hyperparameters["out_channels"]
     input_shape = hyperparameters["input_shape"]
 
-    sw_shape = [in_channels] + input_shape
+    sw_shape_x = [in_channels] + input_shape
+    sw_shape_y = [out_channels] + input_shape
     sw_overlap = [0] + [hyperparameters["patch_overlap"]] * len(input_shape)
     padding_mode = "constant"
 
@@ -282,7 +283,7 @@ def main(attribution_dir, input_dir, graph_dir, model_name, weights_dir, hyperpa
 
         # Creates the patches following the strategy implemented in compute_attribution.py. start_pos is set to jump directly in the interesting position given by the attribution file "_pos.txt"
         patches = iter_patch(
-            x.get_array(), patch_size=sw_shape, start_pos=patch_pos[:, 0], overlap=sw_overlap, mode=padding_mode
+            x.get_array(), patch_size=sw_shape_x, start_pos=patch_pos[:, 0], overlap=sw_overlap, mode=padding_mode
         )
 
         for x_patch, pos in patches:
@@ -295,12 +296,18 @@ def main(attribution_dir, input_dir, graph_dir, model_name, weights_dir, hyperpa
 
                 # Retrieves the y_true patch at the same location. The use of iter_patch is very ugly but it ensure the same condition of the patch extraction between attribution and x, particularly for padding. 
                 y_true_patches = iter_patch(
-                    y.get_array(), patch_size=sw_shape, start_pos=patch_pos[:, 0], overlap=sw_overlap, mode=padding_mode
+                    y.get_array(), patch_size=sw_shape_y, start_pos=patch_pos[:, 0], overlap=sw_overlap, mode=padding_mode
                 )
                 for y_true_patch, y_true_patch_pos in y_true_patches: # Actually, only the first iteration is supposed to be perform
-                    # Check the positions given by iter_patch and "_pos.txt" file are equal. Raise exception otherwise
-                    if (patch_pos == y_true_patch_pos).all() == False:
-                        raise RuntimeError("Patchs position are not aligned")
+                    
+                    # Check the positions (spatial only) given by iter_patch and "_pos.txt" file are equal. Raise exception otherwise
+                    if (patch_pos[1:] == y_true_patch_pos[1:]).all() == False:
+                        raise RuntimeError(
+                            "Spatial position of patches does not match. Expected {}, got {}".format(
+                                patch_pos[1:], 
+                                y_true_patch_pos[1:]
+                            )
+                        )
                     break # We have the right y_true patch, we can avoid to continue the loop
 
                 # Save the ground-truth patch
@@ -323,7 +330,7 @@ def main(attribution_dir, input_dir, graph_dir, model_name, weights_dir, hyperpa
                     position=relative_landmark_pos
                 )
 
-                with open(os.path.join(out_json, f"{fname_prefix}.json"), "w") as f:
+                with open(os.path.join(out_json, f"{fname_prefix}_patch.json"), "w") as f:
                 # About the prediction
                     json_data = json.dumps(
                         convert_typing_to_native(
