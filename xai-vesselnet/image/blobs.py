@@ -140,7 +140,7 @@ def compute_blobs_properties(
     selected_props: list[str],
     is_labeled:bool = False,
     include_background:bool = False
-) -> list:
+) -> tuple:
     """
     Measure specified properties of connected components in a labeled image
     See https://scikit-image.org/docs/stable/api/skimage.measure.html#skimage.measure.regionprops
@@ -151,7 +151,7 @@ def compute_blobs_properties(
         is_labeled    : Indicate if I is already labeled. If False, the function will labelize the image.
 
     Returns:
-        props (list[dict]) : The list of RegionProperties
+        tuple (list[dict], ndarray, int) : The list of properties for each blob, the labeled blobs, and the number of blobs detected.
     """
     if not is_labeled:
         labeled_blobs, nlabels = label(I, connectivity=None, return_num=True)

@@ -136,7 +136,7 @@ def compute_relative_degree(
     graph: CGraph,
     y_true: MetaTensor | np.ndarray,
     patch_pos: tuple[tuple],
-    save: SaveImage | tuple[SaveImage | dict] = None,
+    return_images: bool = False,
 ) -> int:
     """
     Compute the relative connectivity of a landmark in a specific patch
@@ -215,44 +215,20 @@ def compute_relative_degree(
 
     logger.info(f"Degree : {node.degree} -> {relative_degree}")
 
-    if save is not None:
+    if return_images == False:
+        return relative_degree
+    else:
+        patch_slice_x = slice(patch_pos[0][0], patch_pos[1][0])
+        patch_slice_y = slice(patch_pos[0][1], patch_pos[1][1])
+        patch_slice_z = slice(patch_pos[0][2], patch_pos[1][2])
 
-        if isinstance(save, SaveImage):
-            saver = save
-            meta_data = None
-        elif isinstance(save, tuple):
-            saver = save[0]
-            meta_data = save[1]
-
-        # if os.path.isdir(saver.folder_layout.output_dir) == False:
-        #     os.mkdir(saver.folder_layout.output_dir)
-
-        # Image scale
-        saver.folder_layout.postfix = f"mask_{node}_{id_landmark}"
-        saver(np.expand_dims(M_bif, axis=0), meta_data=meta_data)
-        saver.folder_layout.postfix = f"skel_biff_{id_landmark}"
-        saver(np.expand_dims(I_skel, axis=0), meta_data=meta_data)
-        saver.folder_layout.postfix = f"skel_exclude_mask_biff_{id_landmark}"
-        saver(np.expand_dims(disconnected_skel, axis=0), meta_data=meta_data)
-
-        # Patch scale
-        saver.folder_layout.postfix = f"patch_ytrue_{id_landmark}"
-        saver(
-            np.expand_dims(
-                y_true[
-                    patch_pos[0][0] : patch_pos[1][0],
-                    patch_pos[0][1] : patch_pos[1][1],
-                    patch_pos[0][2] : patch_pos[1][2],
-                ],
-                axis=0,
-            ),
-            meta_data=meta_data,
-        )
-
-        saver.folder_layout.postfix = f"patch_skel_exclude_mask_biff_{id_landmark}"
-        saver(np.expand_dims(I_skel_patch, axis=0), meta_data=meta_data)
-
-    return relative_degree
+        processing_images = {
+            "patch": y_true[patch_slice_x, patch_slice_y, patch_slice_z],
+            "mask_landmark": M_bif[patch_slice_x, patch_slice_y, patch_slice_z],
+            "skel_cc_landmark":I_skel[patch_slice_x, patch_slice_y, patch_slice_z],
+            "skel_exclude_mask_landmark":I_skel_patch,
+        }
+        return relative_degree, processing_images
 
 
 def main():
