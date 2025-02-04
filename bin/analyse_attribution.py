@@ -6,13 +6,13 @@ import os
 import json
 from tqdm import tqdm
 
-from multiprocessing import Process
-
-import numpy as np
+from multiprocessing import Queue, Process, cpu_count
+from queue import Empty
 
 import utils.configuration as AppCfg
 from utils.json_format import convert_typing_to_native
 from utils.create_output_dirs import create_output_dir
+from utils.template_filename import CXAIVesselNetFilename as Filename
 
 
 def parse_arguments():
@@ -57,22 +57,126 @@ def get_attribution_id(in_path):
     return os.path.normpath(in_path).split(os.sep)[-1]
 
 
-def task_loop_analyse_attribution(thread_id, files, input_dir, output_dir):
+def pbar_listener(queue, ntasks):
+    pbar = tqdm(total=ntasks)
+    for _ in iter(queue.get, None):
+        pbar.update()
 
-    attribution_id = get_attribution_id(input_dir)
+
+def create_attribution_json(file, input_json_dirs, output_dir):
+    struct_fname = Filename(filename=file)
+
+    fname_prefix = struct_fname.get_prefix()
+    fname_basename = struct_fname.get_filename()
+
+    with open(os.path.join(input_json_dirs["landmark"], f"{fname_prefix}_landmark.json"), "r") as json_file:
+        landmark_data = json.load(json_file)
+            
+    with open(os.path.join(input_json_dirs["tubularity"], f"{fname_prefix}_tubularity.json"), "r") as json_file:
+        tubularity_data = json.load(json_file)
+
+    with open(os.path.join(input_json_dirs["connectivity"], f"{fname_prefix}_connectivity.json"), "r") as json_file:
+        connectivity_data = json.load(json_file)
+
+    with open(os.path.join(input_json_dirs["thickness"], f"{fname_prefix}_eedt.json"), "r") as json_file:
+        thickness_data = json.load(json_file)
+
+    with open(os.path.join(input_json_dirs["patch"], f"{fname_prefix}_patch.json"), "r") as json_file:
+        inference_data = json.load(json_file)
+
+    # Depends on channels, use f_basename
+    with open(os.path.join(input_json_dirs["stats"], f"{fname_basename}_stats.json"), "r") as json_file:
+        stats_data = json.load(json_file)
+
+    with open(os.path.join(input_json_dirs["blobs"], f"{fname_basename}_blobs.json"), "r") as json_file:
+        blobs_data = json.load(json_file)
+
+    out_dict = {
+        "point"         : None,
+        "inference"     : None,
+        "attribution"   : None,
+    }
+
+    # Information about the landmark
+    out_dict["point"] = landmark_data | connectivity_data | thickness_data | { "tubularity_probs": tubularity_data }
+    out_dict["inference"] = inference_data
+    out_dict["attribution"] = stats_data | { "blobs": blobs_data }
+        
+    with open(os.path.join(output_dir, f"res_{fname_basename}.json"), "w") as json_file:
+        json.dump(convert_typing_to_native(out_dict), json_file, indent=4)
+
+
+def task_create_attribution_json(files_queue, files_finished_queue, input_json_dirs, output_dir):
+    while True:
+        try:
+            task_file = files_queue.get()
+            
+            if task_file is None:
+                raise Empty
+
+        except Empty:
+            break
+
+        else:
+            # No exception raised, process the job and add the task completion to finished_queue
+            create_attribution_json(task_file, input_json_dirs, output_dir)
+            files_finished_queue.put(task_file)
+    
+    return True
+
+
+def distribute_attribution_json_creation(files, in_json_dirs, output_dir, process_count):
+    nfiles = len(files)
+
+    process_count = min(min(process_count, cpu_count()), nfiles)
+
+    files_to_process = Queue()
+    files_finished = Queue()
+
+    processes = []
+
+    for file in files:
+        files_to_process.put(file)
+
+    # Start the progress bar process
+    proc = Process(target=pbar_listener, args=(files_finished, nfiles))
+    proc.start()
+
+    # creating processes
+    for k in range(process_count):
+        files_to_process.put(None) # Stop condition
+        processes.append(
+            Process(target=task_create_attribution_json, args=(files_to_process, files_finished, in_json_dirs, output_dir))
+        )
+        processes[-1].start()
+
+    # completing process
+    for p in processes:
+        p.join()
+
+    files_finished.put(None)
+    proc.join()
+
+
+def main(in_dir_attribution, output_dir=None, process_count=1):
+    attribution_id = get_attribution_id(in_dir_attribution)
+
+    if output_dir is None:
+        output_dir = cfg.result_dir
+
+    output_dir = create_output_dir(os.path.join(output_dir, "attributions", "json"), attribution_id)
 
     input_json_dirs = {
-        "landmark":   os.path.join(cfg.result_dir, "json", "landmark", attribution_id),
-        "tubularity":   os.path.join(cfg.result_dir, "json", "tubularity", attribution_id),
-        "connectivity": os.path.join(cfg.result_dir, "json", "connectivity", attribution_id),
-        "thickness":    os.path.join(cfg.result_dir, "json", "thickness", attribution_id),
-        "patch":        os.path.join(cfg.result_dir, "json", "patch", attribution_id),
-        "stats":        os.path.join(cfg.result_dir, "json", "stats", attribution_id),
-        "blobs":        os.path.join(cfg.result_dir, "json", "blobs", attribution_id),
+        "landmark":     os.path.join(cfg.result_dir, "landmark",    "json", attribution_id),
+        "tubularity":   os.path.join(cfg.result_dir, "tubularity",  "json", attribution_id),
+        "connectivity": os.path.join(cfg.result_dir, "connectivity","json", attribution_id),
+        "thickness":    os.path.join(cfg.result_dir, "thickness",   "json", attribution_id),
+        "patch":        os.path.join(cfg.result_dir, "patch",       "json", attribution_id),
+        "stats":        os.path.join(cfg.result_dir, "stats",       "json", attribution_id),
+        "blobs":        os.path.join(cfg.result_dir, "blobs",       "json", attribution_id),
     }
 
     logger.info("Checking the file environment:")
-
     for k_path, v_path in input_json_dirs.items():
         path_ok = os.path.exists(v_path)
         
@@ -80,100 +184,10 @@ def task_loop_analyse_attribution(thread_id, files, input_dir, output_dir):
 
         if not path_ok:
             raise EnvironmentError(f"Environment error: {v_path} directory is missing")
-
-    for file in tqdm(files):
-        # Get usefull information from the attribution map file name
-
-        # [DATASET]_[DATAID]_[TRAINING_STRATEGY]_model_[MODELID]_[XAIMETHOD]_[LANDMARKTYPE]_[LANDMARKID]_[PATCHID]_ochan[OUTPUTCHANNELID]_ichan[INPUTCHANNELID].nii.gz
-        # 3Dircadb1_009_0000_model_20230713-144625_Saliency_centerline_0_0_ochan0_ichan0.nii.gz
-        f_basename = os.path.basename(file).split(".")[0]
-        decompose_fname = f_basename.split("_")
-
-        fname_prefix = "_".join(decompose_fname[:-2]) # delete _ochanX_ichanY 
-
-        with open(os.path.join(input_json_dirs["landmark"], f"{fname_prefix}_landmark.json"), "r") as json_file:
-            landmark_data = json.load(json_file)
-            
-        with open(os.path.join(input_json_dirs["tubularity"], f"{fname_prefix}_tubularity.json"), "r") as json_file:
-            tubularity_data = json.load(json_file)
-
-        with open(os.path.join(input_json_dirs["connectivity"], f"{fname_prefix}_connectivity.json"), "r") as json_file:
-            connectivity_data = json.load(json_file)
-
-        with open(os.path.join(input_json_dirs["thickness"], f"{fname_prefix}_eedt.json"), "r") as json_file:
-            thickness_data = json.load(json_file)
-
-        with open(os.path.join(input_json_dirs["patch"], f"{fname_prefix}_patch.json"), "r") as json_file:
-            inference_data = json.load(json_file)
-
-        # Depends on channels, use f_basename
-        with open(os.path.join(input_json_dirs["stats"], f"{f_basename}_stats.json"), "r") as json_file:
-            stats_data = json.load(json_file)
-
-        with open(os.path.join(input_json_dirs["blobs"], f"{f_basename}_blobs.json"), "r") as json_file:
-            blobs_data = json.load(json_file)
-
-        out_dict = {
-            "point"         : None,
-            "inference"     : None,
-            "attribution"   : None,
-        }
-
-        # Information about the landmark
-        out_dict["point"] = landmark_data | connectivity_data | thickness_data | { "tubularity_probs": tubularity_data }
-        out_dict["inference"] = inference_data
-        out_dict["attribution"] = stats_data | { "blobs": blobs_data }
         
-        with open(os.path.join(output_dir, f"res_{f_basename}.json"), "w") as json_file:
-            json.dump(convert_typing_to_native(out_dict), json_file, indent=4)
+    files = [f for f in os.listdir(in_dir_attribution) if f.endswith(".nii.gz")]
 
-    logger.info(f"Thread {thread_id} finished. Result file saved at {output_dir}")
-
-
-def main(attribution_dir, output_dir=None, threads_count=1):
-    # Set output
-    attribution_id = os.path.normpath(attribution_dir).split(os.sep)[-1]
-
-    if output_dir == None:
-        output_dir = cfg.result_dir    
-    output_dir = create_output_dir(os.path.join(output_dir, "attributions", "json"), attribution_id)
-
-    logger.info(f"Output directory: {output_dir}")
-
-    # Set inputs
-    files_attr = [
-        os.path.join(attribution_dir, f) for f in os.listdir(attribution_dir)
-        if f.endswith(".nii.gz") and
-        not os.path.isfile(os.path.join(output_dir, "res_{}.json".format(os.path.basename(f).split(".")[0])))
-    ]
-
-    nfiles = len(files_attr)
-
-    if nfiles > 0:
-
-        if nfiles < threads_count:
-            threads_count = nfiles
-        
-        files_attr_chunks = np.array_split(files_attr, threads_count)
-
-        threads = []
-        for id_chunk, chunk in enumerate(files_attr_chunks):
-            chunk = chunk.tolist()
-
-            logger.debug(f"Chunk {id_chunk} : {len(chunk)} files.")
-
-            threads.append(
-                Process(target=task_loop_analyse_attribution, args=(id_chunk, chunk, attribution_dir, output_dir))
-            )
-            threads[-1].start()
-           
-        for thread in threads:
-            thread.join()
-           
-    else:
-        logger.info("No files found")
-
-    logger.info("The job is over, my Lord")
+    distribute_attribution_json_creation(files, input_json_dirs, output_dir, process_count)
 
 
 if __name__ == "__main__":
