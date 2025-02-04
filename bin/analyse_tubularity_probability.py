@@ -44,6 +44,14 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        metavar=("OUTPUT_DIR"),
+        help="output directory",
+        default=None,
+    )
+    parser.add_argument(
         "--thread",
         "-t",
         type=int,
@@ -145,9 +153,13 @@ def distribute_tubularity_probs_json_creation(files: list[str], graph, map_data:
     proc.join()
 
 
-def main(in_dir_attribution: str, in_dir_filters: str, in_dir_graphs: str, output_dir: str, process_count=None):
+def main(in_dir_attribution: str, in_dir_filters: str, in_dir_graphs: str, output_dir: str=None, process_count=None):
 
     attribution_id = get_attribution_id(in_dir_attribution)
+
+    if output_dir is None:
+        output_dir = cfg.result_dir
+
     output_dir = create_output_dir(
         os.path.join(output_dir, "tubularity"),
         attribution_id
@@ -209,4 +221,4 @@ if __name__ == "__main__":
     )
     logger = logging.getLogger("app")
 
-    main(args.attributions_dir, args.filters_dir, args.graphs_dir, cfg.result_dir, args.thread)
+    main(args.attributions_dir, args.filters_dir, args.graphs_dir, args.output, args.thread)
