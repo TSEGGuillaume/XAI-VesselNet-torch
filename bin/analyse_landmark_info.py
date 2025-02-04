@@ -4,21 +4,21 @@ import logging.config # Mandatory if MONAI is not imported
 
 import os
 import json
-from multiprocessing import Process
+from multiprocessing import Queue, Process, cpu_count
+from queue import Empty
 
 from tqdm import tqdm
 
-import numpy as np
 from monai.transforms import LoadImage
 
 from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVesselGraph
 from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph
-
 from utils.create_output_dirs import create_output_dir
 from utils.json_format import convert_typing_to_native
 from utils.get_landmark_from_args import get_landmark_obj as GetLandmark
 from utils.load_patch_position import read_path_position_from_file as ReadPositionFile
 from utils.distances import distance
+from utils.template_filename import CXAIVesselNetFilename as Filename
 
 
 logger = logging.getLogger("app")
@@ -41,6 +41,14 @@ def parse_arguments():
     )
 
     parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        metavar=("OUTPUT_DIR"),
+        help="output directory",
+        default=None,
+    )
+    parser.add_argument(
         "--thread",
         "-t",
         type=int,
@@ -53,33 +61,23 @@ def parse_arguments():
     return args
 
 
+def pbar_listener(queue, ntasks):
+    pbar = tqdm(total=ntasks)
+    for _ in iter(queue.get, None):
+        pbar.update()
+
+
 def get_attribution_id(in_path):
     return os.path.normpath(in_path).split(os.sep)[-1]
 
 
-def task_compute_landmark_info(thread_id, files, in_path_attr, in_path_graphs, out_path):
-    for file in tqdm(files):
-        f_basename = os.path.basename(file).split(".")[0] # The blob mask share the exact attribution name + postfix "_blobs_label"
-        
-        decompose_fname = f_basename.split("_")
+def create_landmark_info_json(file, in_dir_attribution, graph, affine, output_dir):
+        struct_fname = Filename(filename=file)
 
-        sample_id = "_".join(decompose_fname[:2])
-        f_prefix = "_".join(decompose_fname[:-2]) # Shared by every files that do not depend on input channel's attribution
-
-        landmark_type = decompose_fname[6]
-        landmark_id = decompose_fname[7]
-
-        # I/O
-        _, meta = LoadImage(ensure_channel_first=False, image_only=False)(os.path.join(in_path_attr, file))
-        affine = meta["original_affine"]
-
-        graph = LoadVesselGraph(os.path.join(in_path_graphs, f"{sample_id}_graph.vvg"))        
-        graph = Anatomic2ImageGraph(graph, affine)
-        
         # Retrieves info
-        landmark = GetLandmark(graph, landmark_type=landmark_type, landmark_id=landmark_id)
+        landmark = GetLandmark(graph, landmark_type=struct_fname.landmark_type, landmark_id=struct_fname.landmark_id)
 
-        patch_position_path = os.path.join(in_path_attr, f"{f_prefix}_pos.txt")
+        patch_position_path = os.path.join(in_dir_attribution, f"{struct_fname.get_prefix()}_pos.txt")
         patch_pos = ReadPositionFile(patch_position_path)
         relative_landmark_pos = tuple(lpos - ppos for lpos, ppos in zip(landmark.pos, patch_pos[0]))
 
@@ -89,8 +87,8 @@ def task_compute_landmark_info(thread_id, files, in_path_attr, in_path_graphs, o
         )
 
         dict_output = {
-            "type": landmark_type,
-            "id": landmark_id,
+            "type": struct_fname.landmark_type,
+            "id": struct_fname.landmark_id,
             
             "absolute_position": landmark.pos,
             "relative_position": relative_landmark_pos,
@@ -99,50 +97,91 @@ def task_compute_landmark_info(thread_id, files, in_path_attr, in_path_graphs, o
             "affine": affine,
         }
 
-        with open(os.path.join(out_path, f"{f_prefix}_landmark.json"), "w") as json_file:
+        with open(os.path.join(output_dir, f"{struct_fname.get_prefix()}_landmark.json"), "w") as json_file:
             json.dump(convert_typing_to_native(dict_output), json_file, indent=4)
 
-    logger.info(f"Thread {thread_id} finished. Result file saved at {out_path}")
+
+def task_create_landmark_info_json(files_queue, files_finished_queue, in_dir_attribution, graph, affine, output_dir):
+    while True:
+        try:
+            task_file = files_queue.get()
+            
+            if task_file is None:
+                raise Empty
+
+        except Empty:
+            break
+
+        else:
+            # No exception raised, process the job and add the task completion to finished_queue
+            create_landmark_info_json(task_file, in_dir_attribution, graph, affine, output_dir)
+            files_finished_queue.put(task_file)
+    
+    return True
 
 
-def main(in_path_attr, in_path_graphs, out_path, threads_count=1):
-    # I/O
-    attribution_id = get_attribution_id(in_path_attr)
+def distribute_landmark_info_json_creation(files: list[str], in_dir_attribution: str, graph, affine, output_dir: str, process_count: None|int):
+    nfiles = len(files)
+
+    process_count = min(min(process_count, cpu_count()), nfiles)
+
+    files_to_process = Queue()
+    files_finished = Queue()
+
+    processes = []
+
+    for file in files:
+        files_to_process.put(file)
+
+    # Start the progress bar process
+    proc = Process(target=pbar_listener, args=(files_finished, nfiles))
+    proc.start()
+
+    # creating processes
+    for k in range(process_count):
+        files_to_process.put(None) # Stop condition
+        processes.append(
+            Process(target=task_create_landmark_info_json, args=(files_to_process, files_finished, in_dir_attribution, graph, affine, output_dir))
+        )
+        processes[-1].start()
+
+    # completing process
+    for p in processes:
+        p.join()
+
+    files_finished.put(None)
+    proc.join()
+
+
+def main(in_dir_attribution: str, in_dir_graphs: str, output_dir: str=None, process_count=None):
+
+    attribution_id = get_attribution_id(in_dir_attribution)
+
+    if output_dir is None:
+        output_dir = cfg.result_dir
+
     out_path = create_output_dir(
-        os.path.join(out_path, "landmark"),
+        os.path.join(output_dir, "landmark"),
         attribution_id
     )
 
-    files = [f for f in os.listdir(in_path_attr) if f.endswith(".nii.gz")]
-    nfiles = len(files)
-    logger.info(f"Files count : {nfiles}")
+    image_loader = LoadImage(ensure_channel_first=False, image_only=False)
 
-    if nfiles > 0:
+    files = [f for f in os.listdir(in_dir_attribution) if f.endswith(".nii.gz")]
 
-        if nfiles < threads_count:
-            threads_count = nfiles
-        
-        files_chunks = np.array_split(files, threads_count)
+    unique_samples = { "_".join(file.split('_')[:2]) for file in files }
 
-        threads = []
-        for id_chunk, chunk in enumerate(files_chunks):
-            chunk = chunk.tolist()
+    for sample in unique_samples:
+        logger.info(f"Process sample {sample}")
+        graph = LoadVesselGraph(os.path.join(in_dir_graphs, f"{sample}_graph.vvg"))
 
-            logger.debug(f"Chunk {id_chunk} : {len(chunk)} files.")
+        sample_files = [f for f in files if f.startswith(sample)]
+        _, meta = image_loader(os.path.join(in_dir_attribution, sample_files[0])) # We assume affine of all attirbution maps are equal
+        affine = meta["original_affine"]
 
-            threads.append(
-                Process(target=task_compute_landmark_info, args=(id_chunk, chunk, in_path_attr, in_path_graphs, out_path))
-            )
-            threads[-1].start()
-            logger.info(f"Thread {id_chunk}: start")
+        graph = Anatomic2ImageGraph(graph, affine)
 
-           
-        for thread_idx, thread in enumerate(threads):
-            thread.join()
-            logger.info(f"Thread {thread_idx}: finished")
-
-    else:
-        logger.error("No files found in the directory.")
+        distribute_landmark_info_json_creation(sample_files, in_dir_attribution, graph, affine, out_path, process_count)
 
 
 if __name__ == "__main__":
@@ -161,8 +200,4 @@ if __name__ == "__main__":
     )
     logger = logging.getLogger("app")
 
-    for handler in logger.handlers:
-        if type(handler) == logging.StreamHandler:
-            handler.setLevel(logging.ERROR)
-
-    main(args.attributions_dir, args.graphs_dir, cfg.result_dir, args.thread)
+    main(args.attributions_dir, args.graphs_dir, args.output, args.thread)
