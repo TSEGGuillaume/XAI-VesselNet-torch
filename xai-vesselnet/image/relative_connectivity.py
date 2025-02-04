@@ -154,7 +154,7 @@ def compute_relative_degree(
 
     node = graph.nodes[id_landmark]
 
-    logger.info(f"Compute relative degree for {node} in patch {patch_pos}")
+    logger.debug(f"Compute relative degree for {node} in patch {patch_pos}")
 
     # Get the node mask
     # \ . . . _ . . . /
@@ -213,7 +213,7 @@ def compute_relative_degree(
         label(I_skel_patch, connectivity=None, return_num=True)[1]
     )
 
-    logger.info(f"Degree : {node.degree} -> {relative_degree}")
+    logger.debug(f"Degree : {node.degree} -> {relative_degree}")
 
     if return_images == False:
         return relative_degree
