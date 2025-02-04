@@ -19,13 +19,15 @@ def get_landmark_obj(graph: CGraph, landmark_type: str=None, landmark_id: int|tu
     Returns:
         The position of the landmark. `None` if no landmark_type and landmark_id provided
     """
+    log = logger.debug
+
     if landmark_type == None and landmark_id == None:
         return None
 
     if landmark_type == "node":
         landmark = graph.nodes[int(landmark_id)]
 
-        logger.info(landmark)
+        log(landmark)
 
     elif landmark_type == "centerline":
         landmark = graph.connections[int(landmark_id)]
@@ -37,7 +39,7 @@ def get_landmark_obj(graph: CGraph, landmark_type: str=None, landmark_id: int|tu
 
         landmark = landmark.getMidPoint()
 
-        logger.info(
+        log(
             "_{}_ |{}<->{}| - Skeleton voxel : {}".format(
                 _centerline_id, _centerline_node1, _centerline_node2, landmark.pos
             )
@@ -55,7 +57,7 @@ def get_landmark_obj(graph: CGraph, landmark_type: str=None, landmark_id: int|tu
 
         landmark = CNode(-1, landmark_id, -1)
 
-        logger.info(f"Raw position: {landmark.pos}")
+        log(f"Raw position: {landmark.pos}")
 
     else:
         landmark = None  # TODO : Manage the case where no position provided -> https://captum.ai/tutorials/Segmentation_Interpret
