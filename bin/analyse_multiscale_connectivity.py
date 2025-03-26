@@ -143,8 +143,8 @@ def create_vessel_connectivity_json(file, in_dir_attribution, ytrue, meta, graph
                 {
                     "landmark_type": struct_fname.landmark_type,
                     "landmark_id": landmark_id,
-                    "absolute_degree": abs_degree,
-                    "relative_degree":  new_degree
+                    "global_degree": abs_degree,
+                    "local_degree":  new_degree
                 }
             ),
             json_f
