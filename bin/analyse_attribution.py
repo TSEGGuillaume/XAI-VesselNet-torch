@@ -27,20 +27,11 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        "output",
+        "--output",
         type=str,
         metavar=("OUTPUT_DIR"),
         help="Output directory",
     )
-
-    parser.add_argument(
-        "--hyperparameters",
-        type=str,
-        metavar=("HYPERPARAMETERS_PATH"),
-        default="./resources/default_hyperparameters.json",
-        help="Path to the hyperparameters file (*.json)",
-    )
-
     parser.add_argument("--thread",
         "-t",
         type=int,
@@ -84,6 +75,9 @@ def create_attribution_json(file, input_json_dirs, output_dir):
     with open(os.path.join(input_json_dirs["patch"], f"{fname_prefix}_patch.json"), "r") as json_file:
         inference_data = json.load(json_file)
 
+    with open(os.path.join(input_json_dirs["patch_info"], f"{fname_prefix}_patch_info.json"), "r") as json_file:
+        patch_info = json.load(json_file)
+
     # Depends on channels, use f_basename
     with open(os.path.join(input_json_dirs["stats"], f"{fname_basename}_stats.json"), "r") as json_file:
         stats_data = json.load(json_file)
@@ -93,12 +87,14 @@ def create_attribution_json(file, input_json_dirs, output_dir):
 
     out_dict = {
         "point"         : None,
+        "patch"         : None,
         "inference"     : None,
         "attribution"   : None,
     }
 
     # Information about the landmark
     out_dict["point"] = landmark_data | connectivity_data | thickness_data | { "tubularity_probs": tubularity_data }
+    out_dict["patch"] = patch_info
     out_dict["inference"] = inference_data
     out_dict["attribution"] = stats_data | { "blobs": blobs_data }
         
@@ -174,6 +170,7 @@ def main(in_dir_attribution, output_dir=None, process_count=1):
         "patch":        os.path.join(cfg.result_dir, "patch",       "json", attribution_id),
         "stats":        os.path.join(cfg.result_dir, "stats",       "json", attribution_id),
         "blobs":        os.path.join(cfg.result_dir, "blobs",       "json", attribution_id),
+        "patch_info":   os.path.join(cfg.result_dir, "patch_info",  "json", attribution_id),
     }
 
     logger.info("Checking the file environment:")
