@@ -24,14 +24,13 @@ class CXAIVesselNetFilename:
         Class to contain input/output XAI-VesselNet files.
         This class allows to:
             1/ retrieves data information from a filename (default). If filename is provided, other arguments are ignored.
-            2/ construct a filename from data information passed as argument data 
+            2/ construct a filename from data information passed as argument data.
 
         Note:
             1/ This class is able to manage both attribution map filename, or the associated position file, such as
                 - `3Dircadb1_009_0000_model_20230713-144625_Saliency_centerline_0_0_ochan0_ichan0.nii.gz`
                 - `3Dircadb1_009_0000_model_20230713-144625_Saliency_centerline_0_0_pos.txt`
             2/ We've made the choice to inspire from the Medical Segmentation Decathlon for dataset naming convention (sample id, image modality, ect.). As so, the sample id is formatted with 3 digit (e.g. 009) and training strategy with 4 digit (if `int`) 
-
 
         Args:
             filename : The path (filename or full path) of the file
