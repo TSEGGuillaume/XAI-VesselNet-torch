@@ -18,6 +18,8 @@ from image.blobs import detect_bright_and_dark_blobs, compute_blobs_properties
 
 from metrics.descriptive_statistics import univariate_analysis
 from metrics.total_variation import image_total_variation as TotalVariation
+from metrics.norm import compute_norm
+from metrics.fisher import compute_fisher_contrast_noise_ratio as Fisher
 from utils.create_output_dirs import create_output_dirs
 from utils.json_format import convert_typing_to_native
 from utils.template_filename import CXAIVesselNetFilename as Filename
@@ -120,8 +122,10 @@ def create_blobs_json(file, in_dir_attribution, image_loader, image_saver, out_d
         mask_background = blobs_mask == label_background
         stats_background = univariate_analysis(I_attr[mask_background].flatten())
         #tv_background = TotalVariation(I_attr, neighborhood="N26", norm="L1", mask=mask_background)
+        norm_background = compute_norm(I_attr[mask_background].flatten())
 
         blobs_props["blobs_mask_props"][label_background]["stats"] = stats_background
+        blobs_props["blobs_mask_props"][label_background]["stats"]["norm"] = norm_background
         #blobs_props["blobs_mask_props"][label_background]["stats"]["total_variation"] = tv_background
 
         # \!background --> all_blobs_mask
@@ -129,8 +133,14 @@ def create_blobs_json(file, in_dir_attribution, image_loader, image_saver, out_d
         mask_blobs = blobs_mask >= label_blobs # Useless operation, but for clarity ; blobs_mask is already equal to (blobs_mask>=blobs_label) except for type
         stats_blobs = univariate_analysis(I_attr[mask_blobs].flatten())
         #tv_blobs = TotalVariation(I_attr, neighborhood="N26", norm="L1", mask=mask_blobs)
+        norm_blobs = compute_norm(I_attr[mask_blobs].flatten())
+        fisher_cnr_abs = Fisher(I_attr[mask_blobs].flatten(), I_attr[mask_background].flatten(), abs=True)
+        fisher_cnr = Fisher(I_attr[mask_blobs].flatten(), I_attr[mask_background].flatten(), abs=False)
 
         blobs_props["blobs_mask_props"][label_blobs]["stats"] = stats_blobs 
+        blobs_props["blobs_mask_props"][label_blobs]["stats"]["norm"] = norm_blobs
+        blobs_props["blobs_mask_props"][label_blobs]["stats"]["fisher_CNR_abs"] = fisher_cnr_abs
+        blobs_props["blobs_mask_props"][label_blobs]["stats"]["fisher_CNR"] = fisher_cnr
         #blobs_props["blobs_mask_props"][label_blobs]["stats"]["total_variation"] = tv_blobs
 
         # Now we have all we need for background and "all_blobs_mask"
@@ -147,11 +157,17 @@ def create_blobs_json(file, in_dir_attribution, image_loader, image_saver, out_d
 
                 stats_blob = univariate_analysis(masked_I_attr.flatten())
                 #tv_blobs = TotalVariation(I_attr, neighborhood="N26", norm="L1", mask=mask_current_blobs)
+                norm_blob = compute_norm(masked_I_attr.flatten())
+                fisher_cnr_abs = Fisher(masked_I_attr.flatten(), I_attr[mask_background].flatten(), abs=True)
+                fisher_cnr = Fisher(masked_I_attr.flatten(), I_attr[mask_background].flatten(), abs=False)
 
                 stats_blob["area_check"] = np.sum(mask_current_blobs)
 
                 blob_idx = blob_lbl - 1
                 blobs_props["blobs_props"][blob_idx]["stats"] = stats_blob
+                blobs_props["blobs_props"][blob_idx]["stats"]["norm"] = norm_blob
+                blobs_props["blobs_props"][blob_idx]["stats"]["fisher_CNR_abs"] = fisher_cnr_abs
+                blobs_props["blobs_props"][blob_idx]["stats"]["fisher_CNR"] = fisher_cnr
                 #blobs_props["blobs_props"][blob_idx]["stats"]["total_variation"] = tv_blobs
 
     else:
