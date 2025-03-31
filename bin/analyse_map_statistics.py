@@ -13,6 +13,8 @@ from monai.transforms import LoadImage
 
 from metrics.descriptive_statistics import univariate_analysis
 from metrics.total_variation import image_total_variation as TotalVariation
+from metrics.norm import compute_norm
+
 from utils.create_output_dirs import create_output_dir
 from utils.json_format import convert_typing_to_native
 from utils.template_filename import CXAIVesselNetFilename as Filename
@@ -68,8 +70,10 @@ def create_map_stats_json(file, in_dir_attribution, image_loader, output_dir):
     attr_map = image_loader(os.path.join(in_dir_attribution, file))
 
     stats = univariate_analysis(attr_map.get_array().flatten())
+    norm = compute_norm(attr_map.get_array().flatten())
     #tv = TotalVariation(I_attr.get_array(), neighborhood="N26", norm="L1")
     #stats["total_variation"] = tv
+    stats["norm"] = norm
 
     with open(os.path.join(output_dir, f"{struct_fname.get_filename()}_stats.json"), "w") as out_file:
         json.dump(convert_typing_to_native(stats), out_file, indent=4)
@@ -133,7 +137,7 @@ def main(in_dir_attribution, output_dir, process_count=None):
     if output_dir is None:
         output_dir = cfg.result_dir
 
-    output_dir = create_output_dir(os.path.join(output_dir, "stats"), attribution_id)
+    output_dir = create_output_dir(os.path.join(output_dir, "stats", "json"), attribution_id)
 
     image_loader = LoadImage(ensure_channel_first=False, image_only=True)
 
