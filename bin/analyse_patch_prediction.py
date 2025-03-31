@@ -4,8 +4,7 @@ import logging.config # Mandatory if MONAI is not imported
 
 import os
 import json
-from copy import deepcopy
-
+import copy
 from tqdm import tqdm
 
 import numpy as np
@@ -16,21 +15,19 @@ from monai.networks.utils import one_hot as OneHotEncoding
 from monai.data.utils import iter_patch, decollate_batch
 
 from network.model_creator import init_inference_model as InferenceModel
-from infer import infer_single_data as Predict
-from eval import evaluate
-from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVesselGraph
-from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph
 from utils.load_hyperparameters import load_hyperparameters as LoadHyperparameters
-from utils.load_patch_position import read_path_position_from_file as ReadPositionFile
+from infer import infer_single_data as Predict
+from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVesselGraph
+from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph, image_to_anatomic as UpdateOrigin
 from utils.get_landmark_from_args import get_landmark_obj as GetLandmark
+from eval import evaluate
+from utils.load_patch_position import read_path_position_from_file as ReadPositionFile
+from utils.template_filename import CXAIVesselNetFilename
 from utils.create_output_dirs import create_output_dirs
 from utils.json_format import convert_typing_to_native
 from utils.prebuilt_logs import log_hardware
 
 from models.instanciate_model import _all_models as AvailableModels
-
-
-logger = logging.getLogger("app")
 
 
 def parse_arguments():
@@ -89,20 +86,39 @@ def parse_arguments():
     return args
 
 
-def get_attribution_id(in_path):
+def get_attribution_id(in_path) -> str:
+    """
+    Return the identifier of the dataset (the last directory of the input path), i.e. /<path>/<dataset_id>/<filename>.nii.gz
+
+    Args:
+        in_path : The input path
+
+    Returns:
+        The dataset ID
+    """
     return os.path.normpath(in_path).split(os.sep)[-1]
 
 
-def eval(y_pred, y_true, T_postprocessing=None):
-    
-    # Should be : B, C, H, W, D
+def eval(y_pred: MetaTensor, y_true: MetaTensor, T_postprocessing:Compose=None) -> dict:
+    """
+    Evaluate the prediction w.r.t the ground-truth
+
+    Args:
+        y_pred : The prediction Tensor of shape (B,C,H,W,[D])
+        y_true : The ground-truth Tensor of shape (B,C,H,W,[D])
+        T_postprocessing : The transforms to apply as post-processing
+
+    Returns:
+        The dictionnary of the metrics results
+    """
     output_channels = y_pred.shape[1]
 
-    if T_postprocessing is None:
-        T_postprocessing = Compose([])
+    if T_postprocessing is not None:
+        y_pred = torch.stack([T_postprocessing(i) for i in decollate_batch(y_pred)])
 
-    y_pred = T_postprocessing(y_pred)
-
+    # Not optimized code lines but more explicit : whatever the number of channels, we use OHE (even binary)
+    # The reason is that with the current version of monai (1.1.0), metrics(binary_tensor) and metrics(one_hot_encoded_binary_tensor)) seems not to give the same results.
+    # I.o.t not change the behavior between monoclass and multi-classes, we encode everthing to one-hot 
     if output_channels == 1:
         y_true  = OneHotEncoding(labels=y_true, num_classes=2)
         y_pred  = OneHotEncoding(labels=y_pred, num_classes=2)
@@ -121,9 +137,9 @@ def analyse_prediction(y_pred, y_true, position):
     The analysis at the local scale return the model's output, activated output and the point status (TP, FP, TN, FN) of a specific location. 
 
     Args:
-        y_pred  : The predicted image (B,C,H,W,D)
-        y_true  : The ground-truth image (B,C,H,W,D)
-        position: Indicate if I is already labeled. If False, the function will labelize the image.
+        y_pred  : The predicted image (B,C,H,W,[D])
+        y_true  : The ground-truth image (B,C,H,W,[D])
+        position: The position of the output logit to analyze.
 
     Returns:
         dict: The results of the analysis
@@ -170,12 +186,14 @@ def analyse_prediction(y_pred, y_true, position):
     return pred_nfo
 
 
-def main(attribution_dir, input_dir, graph_dir, model_name, weights_dir, hyperparameters_path, out_path=None):
+# TODO : Working directly on <MetaTensor>.affine would be cleaner imo. In this case, what happens during saving: which affine between meta["affine"] or obj.affine is taken into account ?
+def main(in_dir_attribution, in_dir_x, in_graph_dir, model_name, weights_dir, hyperparameters_path, output_dir=None):
+
     # Select the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log_hardware(device)
 
-    # Load hyperparameters for inference
+    # Load hyperparameters
     hyperparameters = LoadHyperparameters(hyperparameters_path)
 
     in_channels = hyperparameters["in_channels"]
@@ -183,170 +201,190 @@ def main(attribution_dir, input_dir, graph_dir, model_name, weights_dir, hyperpa
     input_shape = hyperparameters["input_shape"]
 
     sw_shape_x = [in_channels] + input_shape
-    sw_shape_y = [out_channels] + input_shape
-    sw_overlap = [0] + [hyperparameters["patch_overlap"]] * len(input_shape)
-    padding_mode = "constant"
+    sw_overlap = [0] + [hyperparameters["patch_overlap"] for _ in range(len(input_shape))]
+    sw_padding_mode = "constant"
+
+    # List files we need to process
+    pos_files = [f for f in os.listdir(in_dir_attribution) if f.endswith("_pos.txt")]
+
+    # A position filename is formatted as {DATASET_ID}_{SAMPLE_ID}_{TRAINING_STRATEGY}_model_{MODEL_ID}_[...]_pos.txt
+    # The first three elements indicate which data to predict, while the fifth element indicate model weights to use.
+    # 
+    # The data structure of unique_file_model_combinations is :
+    # { data_and_model_id_str: { patch_position_id: [], },}
+    # Where the list contains all the attribution files that are related to the same patch. This avoid the multiple predictions of the same patch, and just save multiple times the sameprediction with different names. 
+    unique_file_model_combinations = dict()
+
+    logger.info("Read position files...")
+
+    for pos_file in tqdm(pos_files):
+        
+        unique_file_model_combination_key = "_".join(pos_file.split('_')[:5])
+
+        pos = ReadPositionFile(os.path.join(in_dir_attribution, pos_file))
+        file_pos_identifier = "_".join([f"{dim_start}_{dim_end}" for dim_start, dim_end in zip(pos[0], pos[1])])
+
+        unique_file_model_combinations.setdefault(unique_file_model_combination_key, {}).setdefault(file_pos_identifier, []).append(pos_file)
+
+    image_loader = LoadImage(image_only=False, ensure_channel_first=True)
 
     post_T = Compose([
         Activations(sigmoid=True) if out_channels == 1 else Activations(softmax=True),
         AsDiscrete(threshold=0.5),
     ])
 
-    # Output
-    if out_path is None:
-        out_path = os.path.join(cfg.result_dir, "patch")
+    if output_dir is None:
+        output_dir = os.path.join(cfg.result_dir, "patch")
 
-    attribution_id = get_attribution_id(attribution_dir)
-    out_xpatch, out_ypatch, out_json = create_output_dirs(
+    attribution_id = get_attribution_id(in_dir_attribution)
+
+    out_xpatch, out_json = create_output_dirs(
         [
-            os.path.join(out_path, "patch", "x"),
-            os.path.join(out_path, "patch", "y"),
-            os.path.join(out_path, "json")
+            os.path.join(output_dir, "patch"),
+            os.path.join(output_dir, "json")
         ],
         attribution_id
     )
 
-    saver_xpatch = SaveImage(
+    logger.info(f"Output directory : {out_json}")
+
+    image_x_saver = SaveImage(
         output_dir=out_xpatch,
         output_ext=".nii.gz",
-        output_postfix="",
+        output_postfix="", # It will differs dynamically according to the saved image : x, ytrue, ypred 
         resample=False,
         separate_folder=False,
     )
-    saver_ypatch = SaveImage(
-        output_dir=out_ypatch,
+    image_y_saver = SaveImage(
+        output_dir=out_xpatch,
         output_ext=".nii.gz",
-        output_postfix="", # Defined dynamically
+        output_postfix="", # It will differs dynamically according to the saved image : x, ytrue, ypred 
         resample=False,
         separate_folder=False,
+        output_dtype=np.uint8,
     )
+    
+    for combination_name, file_pos_dict in unique_file_model_combinations.items():
 
-    samples = {}
-    image_loader = LoadImage(ensure_channel_first=True, image_only=False)
+        # Retrieve image and model data
+        split_elems = combination_name.split('_')
+        sample_name = "{}".format("_".join(split_elems[:2]))
+        weights_name = "{}.pth".format("_".join(split_elems[3:]))
 
-    files = [f for f in os.listdir(attribution_dir) if f.endswith(".txt")]
+        logger.info("Infer {} with the model {}".format("{}_{}.nii.gz".format(sample_name, split_elems[2]), weights_name))
 
-    # TODO: This is suboptimized as fuck.
-    # 1/ First, a same patch will be infered multiple times, once per node included in the patch.
-    for file in tqdm(files):
-        # Example of filename:
-        #  3Dircadb1_009_0000_model_20230713-144625_Saliency_centerline_0_0_pos.txt
-        f_basename = os.path.basename(file).split(".")[0]
-        decompose_fname = f_basename.split("_")
-
-        fname_prefix = "_".join(decompose_fname[:-1])
-
-        sample_name = "_".join(decompose_fname[:2])
-        training_strategy = decompose_fname[2]
-        weights_path = os.path.join(weights_dir, "{}.pth".format("_".join(decompose_fname[3:5])))
-        
-        if sample_name not in samples:
-            x, meta = image_loader(os.path.join(input_dir, f"{sample_name}_{training_strategy}.nii.gz"))
-            y, _ = image_loader(os.path.join(input_dir, f"{sample_name}.nii.gz"))
-
-            model = InferenceModel(
-                model_name=model_name,
-                weights_path=weights_path,
-                in_channels=in_channels,
-                out_channels=out_channels,
-                device=device,
-            )
-
-            graph = LoadVesselGraph(os.path.join(graph_dir, f"{sample_name}_graph.vvg"))
-            graph = Anatomic2ImageGraph(graph, meta["original_affine"])
-
-            samples[sample_name] = {
-                "x": x,
-                "y": y,
-                "meta": meta,
-                "model": model,
-                "graph": graph,
-            }
-        
-        else:
-            x = samples[sample_name]["x"]
-            y = samples[sample_name]["y"]
-            meta = samples[sample_name]["meta"]
-            model = samples[sample_name]["model"]
-            graph = samples[sample_name]["graph"]
-      
-        patch_pos = ReadPositionFile(os.path.join(attribution_dir, file))
-
-        # Change the position of the origin to align with the patch
-        meta_cpy = deepcopy(meta)
-        image_space_new_origin = np.array(patch_pos[0])
-        world_space_new_origin = np.matmul(meta["affine"][:-1, :-1], np.atleast_2d(image_space_new_origin).T)
-        meta_cpy["affine"][:-1,-1:] = meta["affine"][:-1,-1:] + world_space_new_origin # [., -1:] to keep 2D dimension of the returned array
-
-        # Translate from [(x_start, y_start, z_start), (x_end, y_end, z_end)] to [[channel_start, channel_end], [x_start, x_end], [y_start, y_end], [z_start, z_end]]
-        patch_pos = np.concatenate([[[0, in_channels]], [[dim_start, dim_end] for dim_start, dim_end in zip(patch_pos[0], patch_pos[1])]], axis=0)
-
-        # Creates the patches following the strategy implemented in compute_attribution.py. start_pos is set to jump directly in the interesting position given by the attribution file "_pos.txt"
-        patches = iter_patch(
-            x.get_array(), patch_size=sw_shape_x, start_pos=patch_pos[:, 0], overlap=sw_overlap, mode=padding_mode
+        # Create the model and load weights
+        model = InferenceModel(
+            model_name=model_name,
+            weights_path=os.path.join(weights_dir, weights_name),
+            in_channels=in_channels,
+            out_channels=out_channels,
+            device=device,
         )
 
-        for x_patch, pos in patches:
-            # Check the positions given by iter_patch and "_pos.txt" file are equal
-            if (patch_pos == pos).all() == True:
-                # Save the input patch
-                meta_cpy["filename_or_obj"] = fname_prefix
-                x_patch = MetaTensor(x_patch, meta=meta_cpy)
-                saver_xpatch(x_patch)
+        x, meta = image_loader(os.path.join(in_dir_x, "{}_{}.nii.gz".format(sample_name, split_elems[2])))
+        y, _ = image_loader(os.path.join(in_dir_x, f"{sample_name}.nii.gz"))
 
-                # Retrieves the y_true patch at the same location. The use of iter_patch is very ugly but it ensure the same condition of the patch extraction between attribution and x, particularly for padding. 
+        graph = LoadVesselGraph(os.path.join(in_graph_dir, "{}_graph.vvg".format("_".join(split_elems[:2]))))
+        graph = Anatomic2ImageGraph(graph, meta["original_affine"])
+
+        patches = iter_patch(
+            x.get_array(), patch_size=sw_shape_x, overlap=sw_overlap, mode=sw_padding_mode
+        )
+
+        logger.info(f"Iterate over patch iterator. This may take a while...")
+        # Useless, mainly for printing...
+        stats_dict = {
+            "Total saved files": 0,
+            "Total patch infered": 0,
+        }
+
+        for patch_x, pos in tqdm(patches):
+
+            stats_dict["Total patch infered"] += 1
+
+            # Update the origin of the patch given the world's coordinate system (i.e. image's origin)  
+            image_origin = np.array([dim[0] for dim in pos[1:]])
+
+            patch_meta = copy.deepcopy(meta)
+            patch_meta["affine"][:-1,-1:] = UpdateOrigin(image_origin, patch_meta["affine"], use_origin=True)
+
+            patch_x = MetaTensor(
+                patch_x,
+                meta=patch_meta
+            ) # The batch dimension is added in Predict (DataLoader)
+
+            # Predict
+            patch_ypred = Predict(model=model, data=patch_x, device=device)[0] # Returns a list of MetaTensor of shape (B,C,X,Y,D)
+
+            patch_pos_identifier = "_".join(["{}_{}".format(dim[0], dim[1]) for dim in pos[1:]])
+
+            try:
+                assoc_files = file_pos_dict[patch_pos_identifier]
+
+                # It's awfull but ensures the patch-ization behavior between x and y is equal
                 y_true_patches = iter_patch(
-                    y.get_array(), patch_size=sw_shape_y, start_pos=patch_pos[:, 0], overlap=sw_overlap, mode=padding_mode
+                    y.get_array(), patch_size=sw_shape_x, start_pos=pos[:, 0], overlap=sw_overlap, mode=sw_padding_mode
                 )
-                for y_true_patch, y_true_patch_pos in y_true_patches: # Actually, only the first iteration is supposed to be perform
-                    
+                for patch_ytrue, y_true_patch_pos in y_true_patches: # Actually, only the first iteration is supposed to be perform
                     # Check the positions (spatial only) given by iter_patch and "_pos.txt" file are equal. Raise exception otherwise
-                    if (patch_pos[1:] == y_true_patch_pos[1:]).all() == False:
+                    if (pos[1:] == y_true_patch_pos[1:]).all() == False:
                         raise RuntimeError(
                             "Spatial position of patches does not match. Expected {}, got {}".format(
-                                patch_pos[1:], 
+                                pos[1:], 
                                 y_true_patch_pos[1:]
                             )
                         )
+                
                     break # We have the right y_true patch, we can avoid to continue the loop
+    
+                # For all files associated with the current patch position
+                for pos_file in assoc_files:
+                    stats_dict["Total saved files"] += 1
 
-                # Save the ground-truth patch
-                meta_cpy["filename_or_obj"] = f"{fname_prefix}_ytrue"
-                y_true_patch = MetaTensor(y_true_patch, meta=meta_cpy)
-                saver_ypatch(y_true_patch)
+                    logger.debug(f"Associated file found : {pos_file} \n\tPosition {pos}")
 
-                # Predict and save the predicted patch
-                y_pred_patch = Predict(model=model, data=x_patch, device=device)[0] # Return a list of MetaTensor of shape (B,C,X,Y,Z)
+                    fname = CXAIVesselNetFilename(filename=pos_file)
 
-                landmark_type = decompose_fname[6]
-                landmark_id = decompose_fname[7]
+                    fname_prefix = fname.get_prefix()
 
-                landmark = GetLandmark(graph, landmark_type, landmark_id)
-                relative_landmark_pos = tuple(lpos - ppos for lpos, ppos in zip(landmark.pos, patch_pos[1:, 0]))
-
-                metrics = analyse_prediction(
-                    y_pred=y_pred_patch, 
-                    y_true=torch.unsqueeze(y_true_patch, dim=0).to(device), # Add the batch dimension to match with y_pred dim.
-                    position=relative_landmark_pos
-                )
-
-                with open(os.path.join(out_json, f"{fname_prefix}_patch.json"), "w") as f:
-                # About the prediction
-                    json_data = json.dumps(
-                        convert_typing_to_native(
-                            { "patch_position": patch_pos } | metrics
-                        ), 
-                        indent=4
+                    # Get the landmark and evaluate prediction w.r.t it
+                    landmark = GetLandmark(graph, fname.landmark_type, fname.landmark_id)
+                    relative_landmark_pos = tuple(lpos - ppos for lpos, ppos in zip(landmark.pos, pos[1:, 0]))
+                    metrics = analyse_prediction(
+                        y_pred=patch_ypred, 
+                        y_true=torch.unsqueeze(torch.from_numpy(patch_ytrue), dim=0).to(device), # Add the batch dimension to match with y_pred dim.
+                        position=relative_landmark_pos
                     )
-                    f.write(json_data)        
 
-                meta_cpy["filename_or_obj"] = f"{fname_prefix}_ypred"
-                final_y_pred_patch = [post_T(i) for i in decollate_batch(y_pred_patch)]
-                y_pred_patch = MetaTensor(final_y_pred_patch[0], meta=meta_cpy)
-                saver_ypatch(y_pred_patch)  
+                    # Save patches (x, ytrue, ypred)
+                    patch_meta["filename_or_obj"] = f"{fname_prefix}_x"
+                    image_x_saver(MetaTensor(patch_x.get_array(), meta=patch_meta))
 
-                break # We have the right y_true patch, we can avoid to continue the loop
+                    patch_meta["filename_or_obj"] = f"{fname_prefix}_ytrue"
+                    image_y_saver(MetaTensor(patch_ytrue, meta=patch_meta))
 
+                    pp_patch_ypred = [post_T(i) for i in decollate_batch(patch_ypred)][0] # Only one for sure
+                    patch_meta["filename_or_obj"] = f"{fname_prefix}_ypred"
+                    image_y_saver(MetaTensor(pp_patch_ypred.get_array(), meta=patch_meta))
+
+                    # Save the metrics JSON
+                    with open(os.path.join(out_json, f"{fname_prefix}_patch.json"), "w") as f:
+                        # Save the JSON
+                        json_data = json.dumps(
+                            convert_typing_to_native(
+                                { "patch_position": pos } | metrics
+                            ), 
+                            indent=4
+                        )
+                        f.write(json_data)    
+
+            except KeyError as e:
+                logger.debug(f"No position file associated with {pos}")
+                pass
+
+        logger.info(f"Prediction statistics : {stats_dict}")
+                
 
 if __name__ == "__main__":
     import utils.configuration as appcfg
@@ -363,10 +401,6 @@ if __name__ == "__main__":
         },
     )
     logger = logging.getLogger("app")
-
-    for handler in logger.handlers:
-        if type(handler) == logging.StreamHandler:
-            handler.setLevel(logging.ERROR)
 
     main(
         args.attribution_dir,

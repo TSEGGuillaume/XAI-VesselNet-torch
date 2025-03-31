@@ -1,26 +1,38 @@
 import numpy as np
+from numpy import ndarray
 
 from graph.graph import CGraph, CNode, CCenterline
 
 
-def image_to_anatomic(image_pos: tuple, affine: np.array) -> tuple:
+def image_to_anatomic(image_pos: ndarray|list|tuple, affine: ndarray, use_origin=True) -> ndarray:
     """
     Transforms an image position to anatomic position.
+    
     Notes: coordinate systems in medical imaging, see https://www.slicer.org/wiki/Coordinate_systems
-
-    TODO: deal with the origin to obtain the actual position of the patient.
 
     Args:
         image_pos   : The image position.
-        affine      : The transformation matrix (4x4).
-
+        affine      : The augmented transformation matrix. (3x3) in 2D, (4x4) in 3D.
+        use_origin  : Indicate wether to replace the point given the original origin. `True` by default 
 
     Returns:
         The anatomic position
     """
+    image_pos = np.array(image_pos)
 
-    image_pos_homo = image_pos + (1,)  # Make vector homogeneous with affine
-    return tuple(np.matmul(affine, image_pos_homo)[:-1])
+    transform = affine[:-1, :-1]
+    origin = affine[:-1,-1:]
+
+    assert transform.shape[0] == image_pos.shape[0], f"Affine shape is {transform.shape[0]} and position shape is {image_pos.shape[0]}." # we only consider the transformation matrix, not the augmented matrix
+
+    anatomic_pos = np.matmul(transform, np.atleast_2d(image_pos).T)
+    
+    if use_origin == True:
+        world_pos = origin + anatomic_pos
+    else:
+        world_pos = anatomic_pos
+
+    return world_pos
 
 
 def anatomic_graph_to_image_graph(graph: CGraph, affine: np.array) -> CGraph:
