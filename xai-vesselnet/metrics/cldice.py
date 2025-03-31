@@ -321,7 +321,7 @@ class clDiceHelper:
 
                 # skeletonize functions does not support gpu.
                 # Keep in mind the current device, send x_pred and x to cpu for skeletonize and resend result to `current_device`
-                current_device = torch.device(x_pred.get_device())
+                current_device = torch.device(x_pred.device)
 
                 if y[b, 0].ndimension() == 2:
                     # We are in a 2D problem
