@@ -41,19 +41,34 @@ def voreen_VesselGraphSave_file_to_graph(p_vessel_graph_file: str):
             node2       = indexed_nodes[node2_id]
 
             skeleton_points = []
-            for point in centerline["skeletonVoxels"]:
-                skeleton_points.append(
-                    {
-                        "pos": tuple(point["pos"]),
-                        "avgDistToSurface": point["avgDistToSurface"],
-                    }
-                )
+            try:
+                for point in centerline["skeletonVoxels"]:
+                    skeleton_points.append(
+                        {
+                            "pos": tuple(point["pos"]),
+                            "avgDistToSurface": point["avgDistToSurface"],
+                            "maxDistToSurface": point["maxDistToSurface"],
+                        }
+                    )
 
-            centerlines.append(
-                CCenterline(
-                    centerline_id, node1, node2, p_skeleton_points=skeleton_points
+                centerlines.append(
+                    CCenterline(
+                        centerline_id, node1, node2, p_skeleton_points=skeleton_points
+                    )
                 )
-            )
+            
+            except KeyError as e:
+                print("No skeleton voxels found for centerline", centerline_id)
+                
+                if e.args[0] == "skeletonVoxels":
+                    centerlines.append(
+                        CCenterline(
+                            centerline_id, node1, node2
+                        )
+                    )
+                else:
+                    raise KeyError(e)
+
 
     return CGraph(list(indexed_nodes.values()), centerlines)
 

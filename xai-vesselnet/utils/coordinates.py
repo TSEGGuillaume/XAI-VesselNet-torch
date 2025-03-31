@@ -77,6 +77,7 @@ def anatomic_graph_to_image_graph(graph: CGraph, affine: np.array) -> CGraph:
                         {
                             "pos": (image_pos[0], image_pos[1], image_pos[2]),
                             "avgDistToSurface": sk_point["avgDistToSurface"],
+                            "maxDistToSurface": sk_point["maxDistToSurface"],
                         }
                     )
 
