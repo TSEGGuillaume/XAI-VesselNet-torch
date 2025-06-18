@@ -234,14 +234,14 @@ def main(in_dir_attribution, in_dir_x, in_graph_dir, model_name, weights_dir, hy
     ])
 
     if output_dir is None:
-        output_dir = os.path.join(cfg.result_dir, "patch")
+        output_dir = cfg.result_dir
 
     attribution_id = get_attribution_id(in_dir_attribution)
 
     out_xpatch, out_json = create_output_dirs(
         [
-            os.path.join(output_dir, "patch"),
-            os.path.join(output_dir, "json")
+            os.path.join(output_dir, "patch", "patch"),
+            os.path.join(output_dir, "patch", "json")
         ],
         attribution_id
     )

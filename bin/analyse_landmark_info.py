@@ -161,7 +161,7 @@ def main(in_dir_attribution: str, in_dir_graphs: str, output_dir: str=None, proc
         output_dir = cfg.result_dir
 
     out_path = create_output_dir(
-        os.path.join(output_dir, "landmark"),
+        os.path.join(output_dir, "landmark", "json"),
         attribution_id
     )
 

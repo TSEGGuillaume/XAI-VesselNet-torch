@@ -161,7 +161,7 @@ def main(in_dir_attribution: str, in_dir_filters: str, in_dir_graphs: str, outpu
         output_dir = cfg.result_dir
 
     output_dir = create_output_dir(
-        os.path.join(output_dir, "tubularity"),
+        os.path.join(output_dir, "tubularity", "json"),
         attribution_id
     )
 
