@@ -283,13 +283,14 @@ def main():
     ]
     transforms = Compose(pipeline)
 
-    predictions = infer(
-        model=model,
-        data=infer_loader,
-        inferer=inferer,
-        device=device,
-        postprocessing=transforms,
-    )
+    with torch.no_grad():
+        predictions = infer(
+            model=model,
+            data=infer_loader,
+            inferer=inferer,
+            device=device,
+            postprocessing=transforms,
+        )
 
     logger.info(f"End prediction for {len(predictions)} data.")
     logger.info(f"Save directory : {save_seg.folder_layout.output_dir}")

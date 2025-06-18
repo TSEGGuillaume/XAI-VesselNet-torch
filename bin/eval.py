@@ -278,13 +278,14 @@ def main():
     ]
     transforms = Compose(pipeline)
 
-    ys_pred = infer(
-        model=model,
-        data=infer_loader,
-        inferer=inferer,
-        device=device,
-        postprocessing=transforms,
-    )
+    with torch.no_grad():
+        ys_pred = infer(
+            model=model,
+            data=infer_loader,
+            inferer=inferer,
+            device=device,
+            postprocessing=transforms,
+        )
 
     # TODO: write a more pythonic data preparation
     # Prepare the prediction data
