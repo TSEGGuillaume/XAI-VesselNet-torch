@@ -89,7 +89,8 @@ class CXAIVesselNetFilename:
                 self.landmark_id = landmark_id
                 self.patch_id = patch_id
                 self.output_channel_id = output_channel_id
-                self.input_channel_id = input_channel_id
+                self.input_channel_id = input_channel_id 
+                # TODO : BUG TO FIX - if the file extension is passed in the last element, it will appear in the attribute. Find a way to dynamically remove the file extension from the last element (no hard code, maybe input_channel_id won't be the last element one day).
 
                 self.basename = self._create_filename_from_elements()
             
@@ -125,7 +126,7 @@ class CXAIVesselNetFilename:
                 # int
                 idx_to_keep += 1
 
-            self.ext = self.basename[idx_to_keep:] # Get the file extension
+            self.ext = ".".join(fname_split[idx_to_keep:]) # Get the file extension
             self.basename = working_filename
 
 
@@ -211,6 +212,26 @@ class CXAIVesselNetFilename:
         return self.basename
     
 
+    def __repr__(self) -> str:
+        return f"CXAIVesselNetFilename( \n \
+            filename:'{self.get_filename()}' \n \
+            dataset_id:'{self.dataset_id}' \n \
+            sample_id:'{self.sample_id}' \n \
+            training_strategy:'{self.training_strategy}' \n \
+            model_id:'{self.model_id}'  \n \
+            attribution_method:'{self.attribution_method}' \n \
+            landmark_type:'{self.landmark_type}' \n \
+            landmark_id:'{self.landmark_id}' \n \
+            patch_id:'{self.patch_id}' \n \
+            output_channel_id:'{self.output_channel_id}' \n \
+            input_channel_id:'{self.input_channel_id}' \n \
+            ) \
+        "
+    
+    def __str__(self) -> str:
+        return f"CXAIVesselNetFilename('{self.get_filename()}')"
+
+
 def main():
     logging.debug("Hello world !")
 
@@ -238,10 +259,13 @@ def main():
 
     obj = CXAIVesselNetFilename(os.path.join(path, "3Dircadb1_009_0000_model_20230713-144625_Saliency_centerline_0_0_ochan0_ichan0.nii.gz"))
     print(obj.get_filename())
+    print(str(obj))
+    print(repr(obj))
 
     obj = CXAIVesselNetFilename(None, "3Dircadb1", "009", "0000", "model_20230713-144625", "Saliency", "centerline", "0", "0", "ochan0", "ichan0.nii.gz")
     print(obj.get_filename())
-
+    print(str(obj))
+    print(repr(obj))
 
 if  __name__ == "__main__":
     main()
