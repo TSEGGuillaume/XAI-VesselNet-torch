@@ -87,8 +87,8 @@ def create_landmark_info_json(file, in_dir_attribution, graph, affine, output_di
         )
 
         dict_output = {
-            "type": struct_fname.landmark_type,
-            "id": struct_fname.landmark_id,
+            "landmark_type": struct_fname.landmark_type,
+            "landmark_id": struct_fname.landmark_id,
             
             "absolute_position": landmark.pos,
             "relative_position": relative_landmark_pos,

@@ -141,8 +141,8 @@ def create_vessel_connectivity_json(file, in_dir_attribution, ytrue, meta, graph
         json.dump(
             convert_typing_to_native(
                 {
-                    "landmark_type": struct_fname.landmark_type,
-                    "landmark_id": landmark_id,
+                    # "landmark_type": struct_fname.landmark_type,
+                    # "landmark_id": landmark_id,
                     "global_degree": abs_degree,
                     "local_degree":  new_degree
                 }
