@@ -116,9 +116,9 @@ def create_vessel_connectivity_json(file, in_dir_attribution, ytrue, meta, graph
         check_value = ytrue[landmark.pos].item()
         if check_value != 0:
             new_degree = -1
-            abs_degree  -1
-            raise RuntimeWarning(f"Position {landmark._id} for sample {file} belong to vessel class ({check_value}) The degree can't be computed.")
-            
+            abs_degree = -1
+            logger.warning(f"Undefined behavior. Position {landmark.pos} for sample {file} belong to the vessel class ({check_value}) but is not part of the graph. Degree can't be computed.")
+
     if images_dict is not None:
         meta_cpy = deepcopy(meta)
         image_space_new_origin = np.array(patch_pos[0])
