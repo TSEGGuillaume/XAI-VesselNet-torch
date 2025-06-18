@@ -26,8 +26,14 @@ def parse_arguments():
         help="Path to the attribution maps directory",
     )
 
-    parser.add_argument(
-        "--output",
+    parser.add_argument("--input",
+        "-i",
+        type=str,
+        metavar=("JSON_DIR"),
+        help="Input directory",
+    )
+    parser.add_argument("--output",
+        "-o",
         type=str,
         metavar=("OUTPUT_DIR"),
         help="Output directory",
@@ -154,8 +160,11 @@ def distribute_attribution_json_creation(files, in_json_dirs, output_dir, proces
     proc.join()
 
 
-def main(in_dir_attribution, output_dir=None, process_count=1):
+def main(in_dir_attribution, input_dir=None, output_dir=None, process_count=1):
     attribution_id = get_attribution_id(in_dir_attribution)
+
+    if input_dir is None:
+        input_dir = cfg.result_dir
 
     if output_dir is None:
         output_dir = cfg.result_dir
@@ -163,14 +172,14 @@ def main(in_dir_attribution, output_dir=None, process_count=1):
     output_dir = create_output_dir(os.path.join(output_dir, "attributions", "json"), attribution_id)
 
     input_json_dirs = {
-        "landmark":     os.path.join(cfg.result_dir, "landmark",    "json", attribution_id),
-        "tubularity":   os.path.join(cfg.result_dir, "tubularity",  "json", attribution_id),
-        "connectivity": os.path.join(cfg.result_dir, "connectivity","json", attribution_id),
-        "thickness":    os.path.join(cfg.result_dir, "thickness",   "json", attribution_id),
-        "patch":        os.path.join(cfg.result_dir, "patch",       "json", attribution_id),
-        "stats":        os.path.join(cfg.result_dir, "stats",       "json", attribution_id),
-        "blobs":        os.path.join(cfg.result_dir, "blobs",       "json", attribution_id),
-        "patch_info":   os.path.join(cfg.result_dir, "patch_info",  "json", attribution_id),
+        "landmark":     os.path.join(input_dir, "landmark",    "json", attribution_id),
+        "tubularity":   os.path.join(input_dir, "tubularity",  "json", attribution_id),
+        "connectivity": os.path.join(input_dir, "connectivity","json", attribution_id),
+        "thickness":    os.path.join(input_dir, "thickness",   "json", attribution_id),
+        "patch":        os.path.join(input_dir, "patch",       "json", attribution_id),
+        "stats":        os.path.join(input_dir, "stats",       "json", attribution_id),
+        "blobs":        os.path.join(input_dir, "blobs",       "json", attribution_id),
+        "patch_info":   os.path.join(input_dir, "patch_info",  "json", attribution_id),
     }
 
     logger.info("Checking the file environment:")
@@ -205,4 +214,4 @@ if __name__ == "__main__":
     )
     logger = logging.getLogger("app")
 
-    main(args.attribution, args.output, args.thread)
+    main(args.attribution, args.input, args.output, args.thread)
