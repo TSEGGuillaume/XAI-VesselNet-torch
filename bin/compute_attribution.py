@@ -2,6 +2,7 @@ import argparse
 import os
 import logging
 import time
+import copy
 
 import torch
 import numpy as np
@@ -17,7 +18,7 @@ from captum.attr import IntegratedGradients, Saliency, InputXGradient
 import models.instanciate_model
 from graph.graph import CNode
 from graph.voreen_parser import voreen_VesselGraphSave_file_to_graph as LoadVesselGraph
-from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph
+from utils.coordinates import anatomic_graph_to_image_graph as Anatomic2ImageGraph, image_to_anatomic as UpdateOrigin
 from utils.load_hyperparameters import load_hyperparameters
 from utils.prebuilt_logs import log_hardware
 from utils.get_landmark_from_args import get_landmark_obj
@@ -351,6 +352,14 @@ def main():
 
                         # Out
                         id_model = os.path.splitext(os.path.basename(weights_path))[0]
+
+                        patch_meta = copy.deepcopy(meta)
+                        patch_meta["affine"][:-1,-1:] = UpdateOrigin(
+                            np.array([dim[0] for dim in pos[1:]]),
+                            meta["affine"],
+                            use_origin=True
+                        )
+                        
                         for attribution_name, attribution_map in attributions.items():
                             # No need to include id_data as SaveImage automatically include it based on metadata
                             out_fname_prefix = f"{id_model}_{attribution_name}_{landmark_type}_{landmark_id}_{idx_involved_patch}"
@@ -361,7 +370,7 @@ def main():
                                 save.folder_layout.postfix = f"{out_fname_prefix}_ochan{idx_output_channel}_ichan{idx_input_channel}"
                                 save(
                                     attribution_map[0, idx_input_channel, ...],
-                                    meta_data=meta,
+                                    meta_data=patch_meta,
                                 )
 
                             # Saving the position of the patch
